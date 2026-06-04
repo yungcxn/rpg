@@ -3,14 +3,8 @@ const ContainerLayout = std.builtin.Type.ContainerLayout;
 const StructField = std.builtin.Type.StructField;
 const Endian = std.builtin.Endian;
 
-const util = @import("util.zig");
-
-pub fn ArrayElemType(comptime T: type) type {
-    util.assert.isarraytype(T);
-    return switch (@typeInfo(T)) {
-        .array => |a| a.child,
-        else => @compileError("expected an array type"),
-    };
+fn comptime_assert(comptime cond: bool, comptime msg: []const u8) void {
+    if (!cond) @compileError(msg);
 }
 
 pub const FnInfo = struct {
@@ -19,11 +13,11 @@ pub const FnInfo = struct {
 };
 
 pub fn struct_hasfunc_bysig(comptime T: type, comptime fninfo: FnInfo) void {
-    util.comptime_assert(
+    comptime_assert(
         @hasDecl(T, fninfo.name),
         @typeName(T) ++ " does not have function '" ++ fninfo.name ++ "'",
     );
-    util.comptime_assert(
+    comptime_assert(
         @TypeOf(@field(T, fninfo.name)) == fninfo.sig,
         @typeName(T) ++ "." ++ fninfo.name ++ " does not match expected signature",
     );
@@ -58,8 +52,8 @@ pub fn SubStruct(
     const s_start = slicestart orelse 0;
     const s_end = sliceend orelse fields.len;
 
-    util.comptime_assert(s_start <= s_end, "slice start <= slice end");
-    util.comptime_assert(s_end <= fields.len, "slice end <= field count");
+    comptime_assert(s_start <= s_end, "slice start <= slice end");
+    comptime_assert(s_end <= fields.len, "slice end <= field count");
 
     const sliced_f = fields[s_start..s_end];
 
@@ -106,7 +100,7 @@ pub fn tupled_init(comptime T: type, args: anytype) T {
     const fields = std.meta.fields(T);
     const arg_fields = std.meta.fields(@TypeOf(args));
 
-    util.comptime_assert(arg_fields.len <= fields.len, "too many arguments");
+    comptime_assert(arg_fields.len <= fields.len, "too many arguments");
 
     var result: T = undefined;
 

@@ -1,6 +1,5 @@
 const std = @import("std");
-const util = @import("util");
-const hack = @import("hack");
+const hack = @import("../util/hack");
 
 fn validateScreenDI(comptime DI: type, comptime funcs: []hack.FnInfo) void {
     inline for (funcs) |func| {

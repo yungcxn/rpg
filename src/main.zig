@@ -2,11 +2,8 @@ const std = @import("std");
 const posix = std.posix;
 const ne = @import("builtin").target.cpu.arch.endian();
 
-const hack = @import("hack.zig");
-const util = @import("util.zig");
+const hack = @import("util/hack.zig");
 const PrefFatPtr = hack.PrefFatPtr;
-const dprint = util.dprint;
-const errprint = util.errprint;
 
 const XContext = struct {
     fd: posix.socket_t,
@@ -67,8 +64,8 @@ const XContext = struct {
                 .big,
             );
 
-            if (util.str_eq(xauthentry.name.slice(), "MIT-MAGIC-COOKIE-1") and
-                util.str_eq(xauthentry.display.slice(), "0"))
+            if (std.mem.eql(u8, xauthentry.name.slice(), "MIT-MAGIC-COOKIE-1") and
+                std.mem.eql(u8, xauthentry.display.slice(), "0"))
             {
                 return xauthentry.data.slice()[0..16];
             }
@@ -90,11 +87,11 @@ const XContext = struct {
             return Error.ConnectError;
         };
 
-        dprint("(1/2) Connected!");
+        std.log.debug("(1/2) Connected!", .{});
 
         const auth_name = "MIT-MAGIC-COOKIE-1";
         const auth_data = read_xauth_cookie() catch |err| {
-            std.debug.print("XAuth Error: {s}\n", .{@errorName(err)});
+            std.log.err("XAuth Error: {s}", .{@errorName(err)});
             return Error.ConnectRequestOfferError;
         };
 
@@ -153,7 +150,8 @@ const XContext = struct {
         }
 
         if (header[0] != 1) {
-            dprint(header[0]); // 0 = failed, 2 = authenticate
+            // 0 = failed, 2 = authenticate
+            std.log.debug("X11 Connection Failed: {d}", .{header[0]});
 
             if (header[0] == 0) {
                 const reason_len = header[1];
@@ -194,7 +192,7 @@ const XContext = struct {
             .root_window = std.mem.readInt(u32, repbuf[screens_offset..][0..4], ne),
         };
 
-        dprint("(2/2) Context Created!");
+        std.log.debug("(2/2) Context Created!", .{});
         return xcontext;
     }
 
@@ -298,7 +296,7 @@ const XContext = struct {
 
 pub fn main() void {
     var xcon: XContext = XContext.connect() catch |err| {
-        errprint(err);
+        std.log.err("{s}", .{@errorName(err)});
         return;
     };
 
@@ -319,14 +317,14 @@ pub fn main() void {
     xcon.create_gc(gc, win, 0x0C, 0xFFFFFF, 0x000000);
     xcon.map_window(win);
     xcon.flush_out() catch |err| {
-        errprint(err);
+        std.log.err("{s}", .{@errorName(err)});
         return;
     };
 
     while (true) {
         var ev: [32]u8 = undefined;
         const readbytes = xcon.next_event(&ev) catch |err| {
-            errprint(err);
+            std.log.err("{s}", .{@errorName(err)});
             return;
         };
         if (readbytes == 0) break;
@@ -338,7 +336,7 @@ pub fn main() void {
 
         if (ev[0] == 12) { // expose
             xcon.flush_out() catch |err| {
-                errprint(err);
+                std.log.err("{s}", .{@errorName(err)});
                 return;
             };
         }
