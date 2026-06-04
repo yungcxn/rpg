@@ -5,18 +5,28 @@ const Endian = std.builtin.Endian;
 
 const util = @import("util.zig");
 
-fn assert_isstruct(comptime T: type) void {
-    util.comptime_assert(switch (@typeInfo(T)) {
-        .@"struct" => true,
-        else => false,
-    }, "expected a struct");
+pub fn ArrayElemType(comptime T: type) type {
+    util.assert.isarraytype(T);
+    return switch (@typeInfo(T)) {
+        .array => |a| a.child,
+        else => @compileError("expected an array type"),
+    };
 }
 
-fn assert_istuple(comptime T: type) void {
-    util.comptime_assert(switch (@typeInfo(T)) {
-        .@"struct" => |i| i.is_tuple,
-        else => false,
-    }, "expected a tuple struct");
+pub const FnInfo = struct {
+    name: []const u8,
+    sig: type,
+};
+
+pub fn struct_hasfunc_bysig(comptime T: type, comptime fninfo: FnInfo) void {
+    util.comptime_assert(
+        @hasDecl(T, fninfo.name),
+        @typeName(T) ++ " does not have function '" ++ fninfo.name ++ "'",
+    );
+    util.comptime_assert(
+        @TypeOf(@field(T, fninfo.name)) == fninfo.sig,
+        @typeName(T) ++ "." ++ fninfo.name ++ " does not match expected signature",
+    );
 }
 
 fn StructFromFields(
@@ -44,8 +54,6 @@ pub fn SubStruct(
     comptime sliceend: ?usize,
     layout: ContainerLayout,
 ) type {
-    assert_isstruct(T);
-
     const fields = std.meta.fields(T);
     const s_start = slicestart orelse 0;
     const s_end = sliceend orelse fields.len;
@@ -79,8 +87,6 @@ pub fn StructMix(
     comptime B: type,
     layout: ContainerLayout,
 ) type {
-    assert_isstruct(A);
-    assert_isstruct(B);
     const fa = std.meta.fields(A);
     const fb = std.meta.fields(B);
     const all = fa ++ fb;
@@ -97,7 +103,6 @@ pub fn EStructMix(comptime A: type, comptime B: type) type {
 }
 
 pub fn tupled_init(comptime T: type, args: anytype) T {
-    assert_isstruct(T);
     const fields = std.meta.fields(T);
     const arg_fields = std.meta.fields(@TypeOf(args));
 
