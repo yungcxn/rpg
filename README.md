@@ -14,7 +14,7 @@ My main inspiration for this are the first _The Legend of Zelda_ Games in the ea
 
 ## Dependencies
 
-- `zig` from `master` -- last build @``
+- `zig` from `master` -- last build @`0.17 (31f157d8)`
 - `vulkan` for graphical rendering
 - `glfw` for platform-independent window frames
 
