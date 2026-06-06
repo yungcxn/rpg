@@ -5,7 +5,7 @@ fn MapTypeComptime(comptime f: anytype, comptime xs: anytype) type {
     switch (@typeInfo(@TypeOf(xs))) {
         .array => return [xs.len]@TypeOf(f(xs[0])),
         .@"struct" => {
-            const fields = std.meta.fields(@TypeOf(xs));
+            const fields = @typeInfo(@TypeOf(xs)).@"struct".fields;
             var types: [fields.len]type = undefined;
             inline for (fields, 0..) |field, i| {
                 types[i] = @TypeOf(f(@field(xs, field.name)));
@@ -22,7 +22,7 @@ fn MapTypeForXsType(comptime f: anytype, comptime XsType: type) type {
     return [
         switch (@typeInfo(XsType)) {
             .array => |a| a.len,
-            .@"struct" => std.meta.fields(XsType).len,
+            .@"struct" => @typeInfo(XsType).@"struct".fields,
             else => @compileError("mapping for type " ++ @typeName(XsType) ++
                 " is not supported"),
         }
@@ -65,7 +65,7 @@ pub fn map(
 fn ElemTypeInHomogSeq(comptime Seq: type) type {
     return switch (@typeInfo(Seq)) {
         .array => |a| a.child,
-        .@"struct" => std.meta.fields(Seq)[0].type, // same type asserted above
+        .@"struct" => @typeInfo(Seq).@"struct".fields[0].type, // same type asserted above
         else => @compileError("unsupported container type: " ++ @typeName(Seq)),
     };
 }
@@ -79,13 +79,13 @@ fn MapTypeForField(
 ) type {
     const len = switch (@typeInfo(XsType)) {
         .array => |a| a.len,
-        .@"struct" => std.meta.fields(XsType).len,
+        .@"struct" => @typeInfo(XsType).@"struct".fields.len,
         else => @compileError("mapping for type " ++ @typeName(XsType) ++
             " is not supported"),
     };
 
     // somehow @TypeOf(@field(..)) is not working here; manual way:
-    inline for (std.meta.fields(ElemTypeInHomogSeq(XsType))) |field| {
+    inline for (@typeInfo(ElemTypeInHomogSeq(XsType)).@"struct".fields) |field| {
         if (std.mem.eql(u8, field.name, @tagName(fieldenumval))) {
             return [len]field.type;
         }

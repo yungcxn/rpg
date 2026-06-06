@@ -41,7 +41,7 @@ pub fn SubStruct(
     comptime sliceend: ?usize,
     layout: ContainerLayout,
 ) type {
-    const fields = std.meta.fields(T);
+    const fields = @typeInfo(T).@"struct".fields;
     const s_start = slicestart orelse 0;
     const s_end = sliceend orelse fields.len;
 
@@ -74,8 +74,8 @@ pub fn StructMix(
     comptime B: type,
     layout: ContainerLayout,
 ) type {
-    const fa = std.meta.fields(A);
-    const fb = std.meta.fields(B);
+    const fa = @typeInfo(A).@"struct".fields;
+    const fb = @typeInfo(B).@"struct".fields;
     const all = fa ++ fb;
 
     return StructFromFields(layout, all);
@@ -90,8 +90,8 @@ pub fn EStructMix(comptime A: type, comptime B: type) type {
 }
 
 pub fn tupled_init(comptime T: type, args: anytype) T {
-    const fields = std.meta.fields(T);
-    const arg_fields = std.meta.fields(@TypeOf(args));
+    const fields = @typeInfo(T).@"struct".fields;
+    const arg_fields = @typeInfo(@TypeOf(args)).@"struct".fields;
 
     comptime_assert(arg_fields.len <= fields.len, "too many arguments");
 
@@ -173,7 +173,7 @@ pub fn complex_parsetostruct(
     };
 
     var toret: T = undefined;
-    inline for (std.meta.fields(T)) |field| {
+    inline for (@typeInfo(T).@"struct".fields) |field| {
         if (comptime is_preffatptr(field.type)) {
             const LenT = field.type.LenType();
             const len = inner.read_next(LenT, cursor, endian);
