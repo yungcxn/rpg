@@ -7,20 +7,13 @@ fn comptime_assert(comptime cond: bool, comptime msg: []const u8) void {
     if (!cond) @compileError(msg);
 }
 
-pub const FnInfo = struct {
-    name: []const u8,
-    sig: type,
-};
-
-pub fn struct_hasfunc_bysig(comptime T: type, comptime fninfo: FnInfo) void {
-    comptime_assert(
-        @hasDecl(T, fninfo.name),
-        @typeName(T) ++ " does not have function '" ++ fninfo.name ++ "'",
-    );
-    comptime_assert(
-        @TypeOf(@field(T, fninfo.name)) == fninfo.sig,
-        @typeName(T) ++ "." ++ fninfo.name ++ " does not match expected signature",
-    );
+pub fn has_func(
+    comptime T: type,
+    comptime name: []const u8,
+    comptime Fn: type,
+) bool {
+    if (!@hasDecl(T, name)) return false;
+    return @TypeOf(@field(T, name)) == Fn;
 }
 
 fn StructFromFields(
