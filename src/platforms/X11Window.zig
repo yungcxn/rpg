@@ -25,7 +25,7 @@ pub const Error = error{
     SendError,
     EventReadError,
     NoHomeDirError,
-    HomeDirReadError,
+    XAuthFileError,
     NoCookieError,
     BufferError,
     CloseError,
@@ -57,13 +57,13 @@ fn read_xauth_cookie() Error![]const u8 {
         return Error.BufferError;
 
     const file = std.Io.Dir.openFileAbsolute(io.get(), path, .{}) catch
-        return Error.HomeDirReadError;
+        return Error.XAuthFileError;
     defer file.close(io.get());
 
     var buf: [4096]u8 = undefined;
     var file_reader = file.reader(io.get(), &buf);
     const reader = &file_reader.interface;
-    reader.readSliceAll(&buf) catch return Error.HomeDirReadError;
+    _ = reader.readSliceShort(&buf) catch return Error.XAuthFileError;
     var cursor: []const u8 = buf[0..];
     while (cursor.len > 0) {
         const xauthentry = hack.complex_parsetostruct(
