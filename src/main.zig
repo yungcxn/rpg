@@ -1,8 +1,8 @@
 const std = @import("std");
-const Window = @import("platform.zig").Window;
-const X11Window = @import("platforms/X11Window.zig");
 const env = @import("util/env.zig");
 const io = @import("util/io.zig");
+
+const Renderer = @import("Renderer.zig");
 
 fn crash(err: anyerror) noreturn {
     std.log.err("Crashed: {s}", .{@errorName(err)});
@@ -13,10 +13,11 @@ pub fn main(init: std.process.Init) void {
     env.init(init.environ_map);
     io.init(init.io);
 
-    var window = Window(X11Window, X11Window.Error).init() catch |err| crash(err);
-    defer window.deinit();
+    var renderer = Renderer.init() catch |err| crash(err);
+    defer renderer.deinit();
 
     while (true) {
-        if (!window.proc_event()) break;
+        _ = renderer.render();
+        std.debug.print("Frame rendered\n", .{});
     }
 }

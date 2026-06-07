@@ -4,6 +4,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const c_vk_glfw = b.addTranslateC(.{
+        .root_source_file = std.Build.LazyPath{ .cwd_relative = "/usr/include/GLFW/glfw3.h" },
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    c_vk_glfw.addIncludePath(std.Build.LazyPath{ .cwd_relative = "/usr/include/GLFW" });
+    c_vk_glfw.defineCMacro("GLFW_INCLUDE_VULKAN", null);
+    c_vk_glfw.defineCMacro("GLFW_EXPOSE_NATIVE_X11", null);
+
     const exe = b.addExecutable(.{
         .name = "rpg",
         .root_module = b.createModule(.{
@@ -12,6 +22,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    exe.root_module.addImport("c_vk_glfw", c_vk_glfw.createModule());
 
     b.installArtifact(exe);
 
