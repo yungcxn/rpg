@@ -1,5 +1,7 @@
 const c = @import("c_vl_glfw");
 
+const std = @import("std");
+
 pub const Error = error{
     RenderError,
 };
