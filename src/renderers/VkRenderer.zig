@@ -1,7 +1,7 @@
 const c = @import("c_vk_glfw");
 const std = @import("std");
 const builtin = @import("builtin");
-const allocator = std.heap.page_allocator;
+const allocator = std.heap.page_allocator; // TODO: better allocator
 
 window: *c.GLFWwindow,
 vk_instance: c.VkInstance,
@@ -50,8 +50,9 @@ fn init_vk_instance() Error!c.VkInstance {
     var instance: c.VkInstance = undefined;
 
     // in macos, we cannot directly create the instance, therefore fix:
+    var required_extensions: std.ArrayList([*c]const u8) = .empty;
+    defer required_extensions.deinit(allocator);
     if (builtin.os.tag == .macos) {
-        var required_extensions: std.ArrayList([*c]const u8) = .empty;
         for (0..glfw_extension_count) |i| {
             if (i < glfw_extension_count) {
                 required_extensions.append(allocator, glfw_extensions[i]) catch {
