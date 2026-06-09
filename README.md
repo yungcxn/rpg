@@ -23,3 +23,8 @@ My main inspiration for this are the first _The Legend of Zelda_ Games in the ea
 ```bash
 zig build
 ```
+
+## TODO
+
+- allocators that differentiate game-lifetime-memory, and ephemeral memory
+- not relying fully on std by implementing my own datastructures?
