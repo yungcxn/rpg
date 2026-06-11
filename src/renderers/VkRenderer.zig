@@ -76,14 +76,7 @@ fn init_vk_instance() Error!c.VkInstance {
         if (!is_sup) return Error.ValidationLayerSupportError;
     }
 
-    const app_info: c.VkApplicationInfo = .{
-        .sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = app,
-        .applicationVersion = c.VK_MAKE_VERSION(0, 1, 0),
-        .pEngineName = "No Engine",
-        .engineVersion = c.VK_MAKE_VERSION(0, 1, 0),
-        .apiVersion = c.VK_API_VERSION_1_0,
-    };
+    const app_info: c.VkApplicationInfo = .{ .sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = app, .apiVersion = c.VK_API_VERSION_1_3 };
 
     const required_extensions = vk_util.alloc_req_extensions(
         allocator,
