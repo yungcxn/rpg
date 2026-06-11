@@ -2,6 +2,25 @@ const c = @import("c_vk_glfw");
 const std = @import("std");
 const builtin = @import("builtin");
 
+pub fn get_physdevice_and_props(
+    alloc: std.mem.Allocator,
+    instance: c.VkInstance,
+    phys_device_id: u32,
+) std.mem.Allocator.Error!struct { c.VkPhysicalDevice, c.VkPhysicalDeviceProperties2 } {
+    var devc: u32 = 0;
+    _ = c.vkEnumeratePhysicalDevices(instance, &devc, null); // to get devicecount
+    const physdevices = try alloc.alloc(c.VkPhysicalDevice, devc);
+    defer alloc.free(physdevices);
+    _ = c.vkEnumeratePhysicalDevices(instance, &devc, physdevices.ptr);
+
+    const target_physdev = physdevices[phys_device_id];
+    var dev_props = c.VkPhysicalDeviceProperties2{
+        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+    };
+    c.vkGetPhysicalDeviceProperties2(target_physdev, &dev_props);
+    return .{ target_physdev, dev_props };
+}
+
 pub fn check_validation_layer_support(
     alloc: std.mem.Allocator,
     comptime N: usize,

@@ -2,8 +2,9 @@ const c = @import("c_vk_glfw");
 const std = @import("std");
 const builtin = @import("builtin");
 const vk_util = @import("vk/util.zig");
-const allocator = std.heap.page_allocator; // TODO: better allocator
+const alloc = std.heap.page_allocator; // TODO: better allocator
 
+const phys_device_id: u32 = 0; // TODO: better device selection
 const enable_validation_layers: bool = builtin.mode == .Debug;
 const validation_layers = [_][*c]const u8{
     "VK_LAYER_KHRONOS_validation",
@@ -22,6 +23,8 @@ const app = "RPG";
 window: *c.GLFWwindow,
 vk_instance: c.VkInstance,
 debug_messenger: c.VkDebugUtilsMessengerEXT, // only for debug
+phys_device: c.VkPhysicalDevice,
+// device: c.VkDevice, // gpu device *handle*
 
 pub const Error = error{
     OOMError,
@@ -30,6 +33,8 @@ pub const Error = error{
     RenderError,
     ValidationLayerSupportError,
     DebugMessengerSetupError,
+    NoGPUFound,
+    DeviceSelectionError,
 };
 
 // should only be called when enable_validation_layers!
@@ -54,6 +59,20 @@ fn init_debug_messenger(instance: c.VkInstance) Error!c.VkDebugUtilsMessengerEXT
     return debug_messenger;
 }
 
+// TODO: should search device by feature support
+fn init_phys_device(instance: c.VkInstance) Error!c.VkPhysicalDevice {
+    const physdevice, const props = vk_util.get_physdevice_and_props(
+        alloc,
+        instance,
+        phys_device_id,
+    ) catch return Error.DeviceSelectionError;
+
+    if (physdevice == null) return Error.NoGPUFound;
+
+    std.log.debug("Using physical device: {s}", .{props.properties.deviceName});
+    return physdevice;
+}
+
 fn init_window() Error!*c.GLFWwindow {
     _ = c.glfwInit();
     _ = c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
@@ -68,7 +87,7 @@ fn init_window() Error!*c.GLFWwindow {
 fn init_vk_instance() Error!c.VkInstance {
     if (enable_validation_layers) {
         const is_sup: bool = vk_util.check_validation_layer_support(
-            allocator,
+            alloc,
             validation_layers.len,
             validation_layers,
         ) catch return Error.OOMError;
@@ -76,14 +95,18 @@ fn init_vk_instance() Error!c.VkInstance {
         if (!is_sup) return Error.ValidationLayerSupportError;
     }
 
-    const app_info: c.VkApplicationInfo = .{ .sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = app, .apiVersion = c.VK_API_VERSION_1_3 };
+    const app_info: c.VkApplicationInfo = .{
+        .sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pApplicationName = app,
+        .apiVersion = c.VK_API_VERSION_1_3,
+    };
 
     const required_extensions = vk_util.alloc_req_extensions(
-        allocator,
+        alloc,
         extensions.len,
         extensions,
     ) catch return Error.OOMError;
-    defer allocator.free(required_extensions);
+    defer alloc.free(required_extensions);
 
     var create_info: c.VkInstanceCreateInfo = .{
         .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -120,8 +143,13 @@ pub fn init() Error!@This() {
     var self = @This(){
         .window = try init_window(),
         .vk_instance = try init_vk_instance(),
+        .phys_device = null,
+        // .device = null,
         .debug_messenger = null,
     };
+
+    self.phys_device = try init_phys_device(self.vk_instance);
+    //self.device = try init_device();
 
     if (comptime enable_validation_layers) {
         self.debug_messenger = try init_debug_messenger(self.vk_instance);
