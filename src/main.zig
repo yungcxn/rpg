@@ -18,6 +18,5 @@ pub fn main(init: std.process.Init) void {
 
     while (true) {
         _ = renderer.render();
-        std.debug.print("Frame rendered\n", .{});
     }
 }
