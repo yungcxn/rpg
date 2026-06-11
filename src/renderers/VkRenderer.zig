@@ -9,10 +9,13 @@ const validation_layers = [_][*c]const u8{
     "VK_LAYER_KHRONOS_validation",
 };
 
-const extensions = [_][*c]const u8{
-    if (builtin.os.tag == .macos) c.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
-    if (enable_validation_layers) c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-};
+const extensions =
+    (if (builtin.os.tag == .macos) [_][*c]const u8{
+        c.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+    } else [0][*c]const u8{}) ++
+    (if (enable_validation_layers) [_][*c]const u8{
+        c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+    } else [0][*c]const u8{});
 
 const app = "RPG";
 

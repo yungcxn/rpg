@@ -1,7 +1,6 @@
 const c = @import("c_vk_glfw");
 const std = @import("std");
 const builtin = @import("builtin");
-const str = @import("../../util/str.zig");
 
 pub fn check_validation_layer_support(
     alloc: std.mem.Allocator,
@@ -23,7 +22,11 @@ pub fn check_validation_layer_support(
         var layer_found = false;
 
         for (available_layers) |layer_properties| {
-            if (str.any_eq(layer_name, layer_properties.layerName)) {
+            if (std.mem.eql(
+                u8,
+                std.mem.sliceTo(&layer_properties.layerName, 0),
+                std.mem.sliceTo(layer_name, 0),
+            )) {
                 layer_found = true;
                 break;
             }
