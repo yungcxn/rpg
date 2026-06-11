@@ -61,7 +61,7 @@ fn init_debug_messenger(instance: c.VkInstance) Error!c.VkDebugUtilsMessengerEXT
 
 // TODO: should search device by feature support
 fn init_phys_device(instance: c.VkInstance) Error!c.VkPhysicalDevice {
-    const physdevice, const props = vk_util.get_physdevice_and_props(
+    const physdevice = vk_util.get_correct_physdevice(
         alloc,
         instance,
         phys_device_id,
@@ -69,7 +69,17 @@ fn init_phys_device(instance: c.VkInstance) Error!c.VkPhysicalDevice {
 
     if (physdevice == null) return Error.NoGPUFound;
 
-    std.log.debug("Using physical device: {s}", .{props.properties.deviceName});
+    if (comptime builtin.mode == .Debug) { // print physdev info only
+        var dev_props = c.VkPhysicalDeviceProperties2{
+            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+        };
+        c.vkGetPhysicalDeviceProperties2(physdevice, &dev_props);
+        std.log.debug(
+            "Using physical device: {s}",
+            .{dev_props.properties.deviceName},
+        );
+    }
+
     return physdevice;
 }
 
