@@ -18,13 +18,24 @@ const extensions =
         c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
     } else [0][*c]const u8{});
 
+const device_extensions =
+    (if (builtin.os.tag == .macos) [_][*c]const u8{
+        "VK_KHR_portability_subset", // required by moltenvk on macos
+    } else [0][*c]const u8{}) ++
+    [_][*c]const u8{
+        c.VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    };
+
 const app = "RPG";
 
 window: *c.GLFWwindow,
 vk_instance: c.VkInstance,
 debug_messenger: c.VkDebugUtilsMessengerEXT, // only for debug
 phys_device: c.VkPhysicalDevice,
-// device: c.VkDevice, // gpu device *handle*
+qf_idx: u32,
+device: c.VkDevice, // gpu device *handle*
+queue: c.VkQueue,
+// TODO: surface and swapchain are next !
 
 pub const Error = error{
     OOMError,
@@ -34,7 +45,10 @@ pub const Error = error{
     ValidationLayerSupportError,
     DebugMessengerSetupError,
     NoGPUFound,
-    DeviceSelectionError,
+    PhysDeviceSelectionError,
+    DeviceCreationError,
+    QueueFamilyIdxNotFound,
+    QueueInitError,
 };
 
 // should only be called when enable_validation_layers!
@@ -59,13 +73,69 @@ fn init_debug_messenger(instance: c.VkInstance) Error!c.VkDebugUtilsMessengerEXT
     return debug_messenger;
 }
 
+fn init_queue(dev: c.VkDevice, qf_idx: u32) Error!c.VkQueue {
+    var queue: c.VkQueue = null;
+    c.vkGetDeviceQueue(dev, qf_idx, 0, &queue);
+    if (queue == null) return Error.QueueInitError;
+    return queue;
+}
+
+fn init_device(physdevice: c.VkPhysicalDevice, qf_idx: u32) Error!c.VkDevice {
+    const qfprio: f32 = 1.0;
+    const queue_create_info = c.VkDeviceQueueCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = qf_idx,
+        .queueCount = 1,
+        .pQueuePriorities = &qfprio,
+    };
+
+    var vk10f = c.VkPhysicalDeviceFeatures{
+        .samplerAnisotropy = c.VK_TRUE,
+    };
+    var vk12f = c.VkPhysicalDeviceVulkan12Features{
+        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .descriptorIndexing = c.VK_TRUE,
+        .shaderSampledImageArrayNonUniformIndexing = c.VK_TRUE,
+        .descriptorBindingVariableDescriptorCount = c.VK_TRUE,
+        .runtimeDescriptorArray = c.VK_TRUE,
+        .bufferDeviceAddress = c.VK_TRUE,
+    };
+    var vk13f = c.VkPhysicalDeviceVulkan13Features{
+        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = &vk12f,
+        .synchronization2 = c.VK_TRUE,
+        .dynamicRendering = c.VK_TRUE,
+    };
+
+    var dev_create_info = c.VkDeviceCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = &vk13f, // through pNext the features are chained together.
+        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = &queue_create_info,
+        .enabledExtensionCount = @intCast(device_extensions.len),
+        .ppEnabledExtensionNames = &device_extensions,
+        .pEnabledFeatures = &vk10f,
+    };
+
+    var new_dev: c.VkDevice = undefined;
+
+    if (c.vkCreateDevice(
+        physdevice,
+        &dev_create_info,
+        null,
+        &new_dev,
+    ) != c.VK_SUCCESS) return Error.DeviceCreationError;
+
+    return new_dev;
+}
+
 // TODO: should search device by feature support
 fn init_phys_device(instance: c.VkInstance) Error!c.VkPhysicalDevice {
-    const physdevice = vk_util.get_correct_physdevice(
+    const physdevice = vk_util.get_physdevice(
         alloc,
         instance,
         phys_device_id,
-    ) catch return Error.DeviceSelectionError;
+    ) catch return Error.PhysDeviceSelectionError;
 
     if (physdevice == null) return Error.NoGPUFound;
 
@@ -154,12 +224,22 @@ pub fn init() Error!@This() {
         .window = try init_window(),
         .vk_instance = try init_vk_instance(),
         .phys_device = null,
-        // .device = null,
+        .qf_idx = 0,
+        .device = null,
+        .queue = null,
         .debug_messenger = null,
     };
 
     self.phys_device = try init_phys_device(self.vk_instance);
-    //self.device = try init_device();
+
+    self.qf_idx = (vk_util.find_qf_idx(
+        alloc,
+        self.phys_device,
+        self.vk_instance,
+    ) catch return Error.OOMError) orelse return Error.QueueFamilyIdxNotFound;
+
+    self.device = try init_device(self.phys_device, self.qf_idx);
+    self.queue = try init_queue(self.device, self.qf_idx);
 
     if (comptime enable_validation_layers) {
         self.debug_messenger = try init_debug_messenger(self.vk_instance);
@@ -177,6 +257,7 @@ pub fn deinit(self: *@This()) void {
         );
     }
 
+    c.vkDestroyDevice(self.device, null);
     c.vkDestroyInstance(self.vk_instance, null);
     c.glfwDestroyWindow(self.window);
     c.glfwTerminate();

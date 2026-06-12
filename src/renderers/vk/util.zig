@@ -2,8 +2,37 @@ const c = @import("c_vk_glfw");
 const std = @import("std");
 const builtin = @import("builtin");
 
+pub fn find_qf_idx(
+    alloc: std.mem.Allocator,
+    physdevice: c.VkPhysicalDevice,
+    instance: c.VkInstance,
+) !?u32 {
+    var queue_familyc: u32 = 0;
+    _ = c.vkGetPhysicalDeviceQueueFamilyProperties(physdevice, &queue_familyc, null);
+
+    const queue_families = try alloc.alloc(c.VkQueueFamilyProperties, queue_familyc);
+    defer alloc.free(queue_families);
+
+    _ = c.vkGetPhysicalDeviceQueueFamilyProperties(
+        physdevice,
+        &queue_familyc,
+        queue_families.ptr,
+    );
+
+    for (queue_families, 0..) |qf, i| {
+        const idx: u32 = @intCast(i);
+        if ((qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0 and
+            c.glfwGetPhysicalDevicePresentationSupport(instance, physdevice, idx) != 0)
+        {
+            return idx;
+        }
+    }
+
+    return null;
+}
+
 // "correct" means: queue-family checked
-pub fn get_correct_physdevice(
+pub fn get_physdevice(
     alloc: std.mem.Allocator,
     instance: c.VkInstance,
     phys_device_id: u32,
@@ -14,41 +43,6 @@ pub fn get_correct_physdevice(
     defer alloc.free(physdevices);
     _ = c.vkEnumeratePhysicalDevices(instance, &devc, physdevices.ptr);
     const chosen_physdevice = physdevices[phys_device_id];
-
-    { // queue family check
-        var queue_familyc: u32 = 0;
-        _ = c.vkGetPhysicalDeviceQueueFamilyProperties(
-            physdevices[phys_device_id],
-            &queue_familyc,
-            null,
-        );
-
-        const queue_families = try alloc.alloc(c.VkQueueFamilyProperties, queue_familyc);
-        defer alloc.free(queue_families);
-
-        _ = c.vkGetPhysicalDeviceQueueFamilyProperties(
-            physdevices[phys_device_id],
-            &queue_familyc,
-            queue_families.ptr,
-        );
-
-        var queue_family_idx: u32 = 0;
-        for (queue_families, 0..) |qf, i| {
-            if ((qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0) {
-                queue_family_idx = @intCast(i);
-                break;
-            }
-        }
-
-        if (c.glfwGetPhysicalDevicePresentationSupport(
-            instance,
-            chosen_physdevice,
-            queue_family_idx,
-        ) == 0) {
-            std.log.debug("Chosen queue family not supported!", .{});
-            return null;
-        }
-    }
 
     return chosen_physdevice;
 }
