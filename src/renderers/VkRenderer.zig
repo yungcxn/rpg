@@ -2,10 +2,11 @@ const c = @import("c_vk_glfw");
 const std = @import("std");
 const builtin = @import("builtin");
 const vk_util = @import("vk/util.zig");
+const QueueFamilyIds = vk_util.QueueFamilyIds;
 const alloc = std.heap.page_allocator; // TODO: better allocator
 
-const phys_device_id: u32 = 0; // TODO: better device selection
 const enable_validation_layers: bool = builtin.mode == .Debug;
+
 const validation_layers = [_][*c]const u8{
     "VK_LAYER_KHRONOS_validation",
 };
@@ -31,11 +32,12 @@ const app = "RPG";
 window: *c.GLFWwindow,
 vk_instance: c.VkInstance,
 debug_messenger: c.VkDebugUtilsMessengerEXT, // only for debug
+surface: c.VkSurfaceKHR,
 phys_device: c.VkPhysicalDevice,
-qf_idx: u32,
+qf_ids: QueueFamilyIds,
 device: c.VkDevice, // gpu device *handle*
-queue: c.VkQueue,
-// TODO: surface and swapchain are next !
+present_q: c.VkQueue,
+graphics_q: c.VkQueue,
 
 pub const Error = error{
     OOMError,
@@ -47,47 +49,50 @@ pub const Error = error{
     NoGPUFound,
     PhysDeviceSelectionError,
     DeviceCreationError,
-    QueueFamilyIdxNotFound,
     QueueInitError,
+    SurfaceInitError,
+    QueueFamilyIdxNotFound,
 };
 
-// should only be called when enable_validation_layers!
-fn init_debug_messenger(instance: c.VkInstance) Error!c.VkDebugUtilsMessengerEXT {
-    var debug_messenger: c.VkDebugUtilsMessengerEXT = undefined;
-
-    var dbg_create_info: c.VkDebugUtilsMessengerCreateInfoEXT =
-        vk_util.get_debug_utils_messenger_create_info();
-
-    const retcode = vk_util.create_debug_utils_messenger_ext(
-        instance,
-        &dbg_create_info,
-        null,
-        &debug_messenger,
-    );
-
-    if (retcode != c.VK_SUCCESS) {
-        std.log.err("Failed to set up debug messenger ({})", .{retcode});
-        return Error.DebugMessengerSetupError;
+fn init_surface(
+    vk_instance: c.VkInstance,
+    window: *c.GLFWwindow,
+) Error!c.VkSurfaceKHR {
+    var surface: c.VkSurfaceKHR = undefined;
+    const ret = c.glfwCreateWindowSurface(vk_instance, window, null, &surface);
+    if (ret != c.VK_SUCCESS) {
+        std.log.err("Failed to create window surface: {}", .{ret});
+        return Error.SurfaceInitError;
     }
-
-    return debug_messenger;
+    return surface;
 }
 
-fn init_queue(dev: c.VkDevice, qf_idx: u32) Error!c.VkQueue {
+fn init_queue(dev: c.VkDevice, qf_id: u32) Error!c.VkQueue {
     var queue: c.VkQueue = null;
-    c.vkGetDeviceQueue(dev, qf_idx, 0, &queue);
+    c.vkGetDeviceQueue(dev, qf_id, 0, &queue);
     if (queue == null) return Error.QueueInitError;
     return queue;
 }
 
-fn init_device(physdevice: c.VkPhysicalDevice, qf_idx: u32) Error!c.VkDevice {
+fn init_device(physdevice: c.VkPhysicalDevice, qf_ids: QueueFamilyIds) Error!c.VkDevice {
     const qfprio: f32 = 1.0;
-    const queue_create_info = c.VkDeviceQueueCreateInfo{
-        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = qf_idx,
-        .queueCount = 1,
-        .pQueuePriorities = &qfprio,
-    };
+
+    var unique_ids: std.ArrayList(u32) = qf_ids.alloc_unique_set(alloc) catch {
+        return Error.OOMError;
+    } orelse return Error.QueueFamilyIdxNotFound;
+    defer unique_ids.deinit(alloc);
+
+    var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
+    defer queue_create_infos.deinit(alloc);
+
+    for (unique_ids.items) |qf_idx| {
+        queue_create_infos.append(alloc, c.VkDeviceQueueCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = qf_idx,
+            .queueCount = 1,
+            .pQueuePriorities = &qfprio,
+        }) catch return Error.OOMError;
+    }
 
     var vk10f = c.VkPhysicalDeviceFeatures{
         .samplerAnisotropy = c.VK_TRUE,
@@ -110,8 +115,8 @@ fn init_device(physdevice: c.VkPhysicalDevice, qf_idx: u32) Error!c.VkDevice {
     var dev_create_info = c.VkDeviceCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = &vk13f, // through pNext the features are chained together.
-        .queueCreateInfoCount = 1,
-        .pQueueCreateInfos = &queue_create_info,
+        .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
+        .pQueueCreateInfos = queue_create_infos.items.ptr,
         .enabledExtensionCount = @intCast(device_extensions.len),
         .ppEnabledExtensionNames = &device_extensions,
         .pEnabledFeatures = &vk10f,
@@ -129,28 +134,26 @@ fn init_device(physdevice: c.VkPhysicalDevice, qf_idx: u32) Error!c.VkDevice {
     return new_dev;
 }
 
-// TODO: should search device by feature support
-fn init_phys_device(instance: c.VkInstance) Error!c.VkPhysicalDevice {
-    const physdevice = vk_util.get_physdevice(
-        alloc,
+// should only be called when enable_validation_layers!
+fn init_debug_messenger(instance: c.VkInstance) Error!c.VkDebugUtilsMessengerEXT {
+    var debug_messenger: c.VkDebugUtilsMessengerEXT = undefined;
+
+    var dbg_create_info: c.VkDebugUtilsMessengerCreateInfoEXT =
+        vk_util.get_debug_utils_messenger_create_info();
+
+    const retcode = vk_util.create_debug_utils_messenger_ext(
         instance,
-        phys_device_id,
-    ) catch return Error.PhysDeviceSelectionError;
+        &dbg_create_info,
+        null,
+        &debug_messenger,
+    );
 
-    if (physdevice == null) return Error.NoGPUFound;
-
-    if (comptime builtin.mode == .Debug) { // print physdev info only
-        var dev_props = c.VkPhysicalDeviceProperties2{
-            .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-        };
-        c.vkGetPhysicalDeviceProperties2(physdevice, &dev_props);
-        std.log.debug(
-            "Using physical device: {s}",
-            .{dev_props.properties.deviceName},
-        );
+    if (retcode != c.VK_SUCCESS) {
+        std.log.err("Failed to set up debug messenger ({})", .{retcode});
+        return Error.DebugMessengerSetupError;
     }
 
-    return physdevice;
+    return debug_messenger;
 }
 
 fn init_window() Error!*c.GLFWwindow {
@@ -223,27 +226,32 @@ pub fn init() Error!@This() {
     var self = @This(){
         .window = try init_window(),
         .vk_instance = try init_vk_instance(),
-        .phys_device = null,
-        .qf_idx = 0,
-        .device = null,
-        .queue = null,
         .debug_messenger = null,
+        .surface = null,
+        .phys_device = null,
+        .qf_ids = QueueFamilyIds{},
+        .device = null,
+
+        .present_q = null,
+        .graphics_q = null,
     };
-
-    self.phys_device = try init_phys_device(self.vk_instance);
-
-    self.qf_idx = (vk_util.find_qf_idx(
-        alloc,
-        self.phys_device,
-        self.vk_instance,
-    ) catch return Error.OOMError) orelse return Error.QueueFamilyIdxNotFound;
-
-    self.device = try init_device(self.phys_device, self.qf_idx);
-    self.queue = try init_queue(self.device, self.qf_idx);
 
     if (comptime enable_validation_layers) {
         self.debug_messenger = try init_debug_messenger(self.vk_instance);
     }
+
+    self.surface = try init_surface(self.vk_instance, self.window);
+
+    self.phys_device, self.qf_ids = vk_util.get_physdevice_and_qf(
+        alloc,
+        self.vk_instance,
+        self.surface,
+    ) catch return Error.NoGPUFound orelse return Error.PhysDeviceSelectionError;
+
+    self.device = try init_device(self.phys_device, self.qf_ids);
+
+    self.present_q = try init_queue(self.device, self.qf_ids.present.?);
+    self.graphics_q = try init_queue(self.device, self.qf_ids.graphics.?);
 
     return self;
 }
@@ -258,6 +266,7 @@ pub fn deinit(self: *@This()) void {
     }
 
     c.vkDestroyDevice(self.device, null);
+    c.vkDestroySurfaceKHR(self.vk_instance, self.surface, null);
     c.vkDestroyInstance(self.vk_instance, null);
     c.glfwDestroyWindow(self.window);
     c.glfwTerminate();

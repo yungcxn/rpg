@@ -2,11 +2,42 @@ const c = @import("c_vk_glfw");
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub fn find_qf_idx(
+pub const QueueFamilyIds = struct {
+    graphics: ?u32 = null,
+    present: ?u32 = null,
+
+    pub fn complete(self: @This()) bool {
+        inline for (@typeInfo(@This()).@"struct".fields) |field| {
+            if (@field(self, field.name) == null) return false;
+        }
+        return true;
+    }
+
+    pub fn alloc_unique_set(self: @This(), alloc: std.mem.Allocator) !?std.ArrayList(u32) {
+        if (!self.complete()) return null;
+
+        var set = std.ArrayList(u32).empty;
+
+        inline for (@typeInfo(@This()).@"struct".fields) |field| {
+            const qf_id = @field(self, field.name).?;
+            var should_add = true;
+            for (set.items) |id| {
+                if (id == qf_id) {
+                    should_add = false;
+                    break;
+                }
+            }
+            if (should_add) try set.append(alloc, qf_id);
+        }
+        return set;
+    }
+};
+
+fn find_qf_ids(
     alloc: std.mem.Allocator,
     physdevice: c.VkPhysicalDevice,
-    instance: c.VkInstance,
-) !?u32 {
+    surface: c.VkSurfaceKHR,
+) !QueueFamilyIds {
     var queue_familyc: u32 = 0;
     _ = c.vkGetPhysicalDeviceQueueFamilyProperties(physdevice, &queue_familyc, null);
 
@@ -19,32 +50,52 @@ pub fn find_qf_idx(
         queue_families.ptr,
     );
 
+    var indices = QueueFamilyIds{};
+
     for (queue_families, 0..) |qf, i| {
         const idx: u32 = @intCast(i);
-        if ((qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0 and
-            c.glfwGetPhysicalDevicePresentationSupport(instance, physdevice, idx) != 0)
-        {
-            return idx;
+
+        if ((qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0) {
+            indices.graphics = idx;
         }
+
+        var present_support: c.VkBool32 = c.VK_FALSE;
+        _ = c.vkGetPhysicalDeviceSurfaceSupportKHR(physdevice, idx, surface, &present_support);
+        if (present_support == c.VK_TRUE) {
+            indices.present = idx;
+        }
+
+        if (indices.complete()) break;
     }
 
-    return null;
+    return indices;
 }
 
-// "correct" means: queue-family checked
-pub fn get_physdevice(
+// important: it returns the queuefamilyids aswell since we do not need to recalc them later
+pub fn get_physdevice_and_qf(
     alloc: std.mem.Allocator,
     instance: c.VkInstance,
-    phys_device_id: u32,
-) std.mem.Allocator.Error!c.VkPhysicalDevice {
+    surface: c.VkSurfaceKHR,
+) std.mem.Allocator.Error!?struct { c.VkPhysicalDevice, QueueFamilyIds } {
     var devc: u32 = 0;
     _ = c.vkEnumeratePhysicalDevices(instance, &devc, null); // to get devicecount
     const physdevices = try alloc.alloc(c.VkPhysicalDevice, devc);
     defer alloc.free(physdevices);
     _ = c.vkEnumeratePhysicalDevices(instance, &devc, physdevices.ptr);
-    const chosen_physdevice = physdevices[phys_device_id];
 
-    return chosen_physdevice;
+    for (physdevices) |physdevice| {
+        const indices = try find_qf_ids(
+            alloc,
+            physdevice,
+            surface,
+        );
+
+        if (indices.complete()) {
+            return .{ physdevice, indices };
+        }
+    }
+
+    return null;
 }
 
 pub fn check_validation_layer_support(
