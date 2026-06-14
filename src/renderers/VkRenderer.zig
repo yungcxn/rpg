@@ -200,7 +200,7 @@ pub fn init() Error!@This() {
     };
     defer alloc.free(physdevices);
 
-    const qf_lists = vk_util.alloc_qf_slice(alloc, physdevices, self.surface) catch {
+    const qf_lists = QueueFamilyIds.alloc_qf_slice(alloc, physdevices, self.surface) catch {
         return Error.OOMError;
     };
     defer alloc.free(qf_lists);

@@ -6,14 +6,7 @@ pub const QueueFamilyIds = struct {
     graphics: ?u32 = null,
     present: ?u32 = null,
 
-    pub fn complete(self: @This()) bool {
-        inline for (@typeInfo(@This()).@"struct".fields) |field| {
-            if (@field(self, field.name) == null) return false;
-        }
-        return true;
-    }
-
-    pub fn alloc_unique_set(self: @This(), alloc: std.mem.Allocator) !?std.ArrayList(u32) {
+    fn alloc_unique_set(self: @This(), alloc: std.mem.Allocator) !?std.ArrayList(u32) {
         if (!self.complete()) return null;
 
         var set = std.ArrayList(u32).empty;
@@ -30,6 +23,63 @@ pub const QueueFamilyIds = struct {
             if (should_add) try set.append(alloc, qf_id);
         }
         return set;
+    }
+
+    fn find_ids(
+        alloc: std.mem.Allocator,
+        physdevice: c.VkPhysicalDevice,
+        surface: c.VkSurfaceKHR,
+    ) !QueueFamilyIds {
+        var queue_familyc: u32 = 0;
+        _ = c.vkGetPhysicalDeviceQueueFamilyProperties(physdevice, &queue_familyc, null);
+
+        const queue_families = try alloc.alloc(c.VkQueueFamilyProperties, queue_familyc);
+        defer alloc.free(queue_families);
+
+        _ = c.vkGetPhysicalDeviceQueueFamilyProperties(
+            physdevice,
+            &queue_familyc,
+            queue_families.ptr,
+        );
+
+        var indices = QueueFamilyIds{};
+
+        for (queue_families, 0..) |qf, i| {
+            const idx: u32 = @intCast(i);
+
+            if ((qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0) {
+                indices.graphics = idx;
+            }
+
+            var present_support: c.VkBool32 = c.VK_FALSE;
+            _ = c.vkGetPhysicalDeviceSurfaceSupportKHR(physdevice, idx, surface, &present_support);
+            if (present_support == c.VK_TRUE) {
+                indices.present = idx;
+            }
+
+            if (indices.complete()) break;
+        }
+
+        return indices;
+    }
+
+    pub fn alloc_qf_slice(
+        alloc: std.mem.Allocator,
+        physdevices: []c.VkPhysicalDevice,
+        surface: c.VkSurfaceKHR,
+    ) ![]QueueFamilyIds {
+        var qf_lists = try alloc.alloc(QueueFamilyIds, physdevices.len);
+        for (physdevices, 0..) |physdevice, i| {
+            qf_lists[i] = try find_ids(alloc, physdevice, surface);
+        }
+        return qf_lists;
+    }
+
+    pub fn complete(self: @This()) bool {
+        inline for (@typeInfo(@This()).@"struct".fields) |field| {
+            if (@field(self, field.name) == null) return false;
+        }
+        return true;
     }
 };
 
@@ -134,44 +184,6 @@ pub fn supports_dev_extensions(
     return true;
 }
 
-fn find_qf_ids(
-    alloc: std.mem.Allocator,
-    physdevice: c.VkPhysicalDevice,
-    surface: c.VkSurfaceKHR,
-) !QueueFamilyIds {
-    var queue_familyc: u32 = 0;
-    _ = c.vkGetPhysicalDeviceQueueFamilyProperties(physdevice, &queue_familyc, null);
-
-    const queue_families = try alloc.alloc(c.VkQueueFamilyProperties, queue_familyc);
-    defer alloc.free(queue_families);
-
-    _ = c.vkGetPhysicalDeviceQueueFamilyProperties(
-        physdevice,
-        &queue_familyc,
-        queue_families.ptr,
-    );
-
-    var indices = QueueFamilyIds{};
-
-    for (queue_families, 0..) |qf, i| {
-        const idx: u32 = @intCast(i);
-
-        if ((qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0) {
-            indices.graphics = idx;
-        }
-
-        var present_support: c.VkBool32 = c.VK_FALSE;
-        _ = c.vkGetPhysicalDeviceSurfaceSupportKHR(physdevice, idx, surface, &present_support);
-        if (present_support == c.VK_TRUE) {
-            indices.present = idx;
-        }
-
-        if (indices.complete()) break;
-    }
-
-    return indices;
-}
-
 pub fn alloc_physdevice_slice(
     alloc: std.mem.Allocator,
     instance: c.VkInstance,
@@ -181,18 +193,6 @@ pub fn alloc_physdevice_slice(
     const physdevices = try alloc.alloc(c.VkPhysicalDevice, devc);
     _ = c.vkEnumeratePhysicalDevices(instance, &devc, physdevices.ptr);
     return physdevices;
-}
-
-pub fn alloc_qf_slice(
-    alloc: std.mem.Allocator,
-    physdevices: []c.VkPhysicalDevice,
-    surface: c.VkSurfaceKHR,
-) ![]QueueFamilyIds {
-    var qf_lists = try alloc.alloc(QueueFamilyIds, physdevices.len);
-    for (physdevices, 0..) |physdevice, i| {
-        qf_lists[i] = try find_qf_ids(alloc, physdevice, surface);
-    }
-    return qf_lists;
 }
 
 pub fn check_validation_layer_support(
