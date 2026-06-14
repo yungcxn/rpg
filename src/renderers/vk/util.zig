@@ -33,6 +33,79 @@ pub const QueueFamilyIds = struct {
     }
 };
 
+pub const FeaturedDeviceCreateInfo = struct {
+    vk10f: c.VkPhysicalDeviceFeatures,
+    vk12f: c.VkPhysicalDeviceVulkan12Features,
+    vk13f: c.VkPhysicalDeviceVulkan13Features,
+
+    queue_create_infos: std.ArrayList(c.VkDeviceQueueCreateInfo),
+    dev_create_info: c.VkDeviceCreateInfo,
+
+    // alloc is needed since feature pointers are kept in fields, which render invalid on return
+    pub fn init(
+        alloc: std.mem.Allocator,
+        qf_ids: QueueFamilyIds,
+        device_extensions: []const [*c]const u8,
+    ) !?*@This() {
+        const qfprio: f32 = 1.0;
+
+        var unique_ids: std.ArrayList(u32) = try qf_ids.alloc_unique_set(alloc) orelse return null;
+        defer unique_ids.deinit(alloc); // values are copied, so freeing is ok
+
+        var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
+
+        for (unique_ids.items) |qf_idx| {
+            try queue_create_infos.append(alloc, c.VkDeviceQueueCreateInfo{
+                .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .queueFamilyIndex = qf_idx,
+                .queueCount = 1,
+                .pQueuePriorities = &qfprio,
+            });
+        }
+
+        var this = try alloc.create(@This());
+        this.* = @This(){
+            .vk10f = c.VkPhysicalDeviceFeatures{
+                .samplerAnisotropy = c.VK_TRUE,
+            },
+            .vk12f = c.VkPhysicalDeviceVulkan12Features{
+                .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+                .descriptorIndexing = c.VK_TRUE,
+                .shaderSampledImageArrayNonUniformIndexing = c.VK_TRUE,
+                .descriptorBindingVariableDescriptorCount = c.VK_TRUE,
+                .runtimeDescriptorArray = c.VK_TRUE,
+                .bufferDeviceAddress = c.VK_TRUE,
+            },
+            .vk13f = c.VkPhysicalDeviceVulkan13Features{
+                .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+                .pNext = null, // defered
+                .synchronization2 = c.VK_TRUE,
+                .dynamicRendering = c.VK_TRUE,
+            },
+            .queue_create_infos = queue_create_infos,
+            .dev_create_info = c.VkDeviceCreateInfo{
+                .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                .pNext = null, // defered
+                .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
+                .pQueueCreateInfos = queue_create_infos.items.ptr,
+                .enabledExtensionCount = @intCast(device_extensions.len),
+                .ppEnabledExtensionNames = device_extensions.ptr,
+                .pEnabledFeatures = &this.vk10f,
+            },
+        };
+
+        this.*.vk13f.pNext = &this.vk12f;
+        this.*.dev_create_info.pNext = &this.vk13f;
+
+        return this;
+    }
+
+    pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+        self.queue_create_infos.deinit(alloc);
+        alloc.destroy(self);
+    }
+};
+
 fn find_qf_ids(
     alloc: std.mem.Allocator,
     physdevice: c.VkPhysicalDevice,

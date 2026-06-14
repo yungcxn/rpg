@@ -75,58 +75,20 @@ fn init_queue(dev: c.VkDevice, qf_id: u32) Error!c.VkQueue {
 }
 
 fn init_device(physdevice: c.VkPhysicalDevice, qf_ids: QueueFamilyIds) Error!c.VkDevice {
-    const qfprio: f32 = 1.0;
-
-    var unique_ids: std.ArrayList(u32) = qf_ids.alloc_unique_set(alloc) catch {
+    const fdev_create_info = vk_util.FeaturedDeviceCreateInfo.init(
+        alloc,
+        qf_ids,
+        device_extensions[0..],
+    ) catch {
         return Error.OOMError;
-    } orelse return Error.QueueFamilyIdxNotFound;
-    defer unique_ids.deinit(alloc);
-
-    var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
-    defer queue_create_infos.deinit(alloc);
-
-    for (unique_ids.items) |qf_idx| {
-        queue_create_infos.append(alloc, c.VkDeviceQueueCreateInfo{
-            .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex = qf_idx,
-            .queueCount = 1,
-            .pQueuePriorities = &qfprio,
-        }) catch return Error.OOMError;
-    }
-
-    var vk10f = c.VkPhysicalDeviceFeatures{
-        .samplerAnisotropy = c.VK_TRUE,
-    };
-    var vk12f = c.VkPhysicalDeviceVulkan12Features{
-        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        .descriptorIndexing = c.VK_TRUE,
-        .shaderSampledImageArrayNonUniformIndexing = c.VK_TRUE,
-        .descriptorBindingVariableDescriptorCount = c.VK_TRUE,
-        .runtimeDescriptorArray = c.VK_TRUE,
-        .bufferDeviceAddress = c.VK_TRUE,
-    };
-    var vk13f = c.VkPhysicalDeviceVulkan13Features{
-        .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-        .pNext = &vk12f,
-        .synchronization2 = c.VK_TRUE,
-        .dynamicRendering = c.VK_TRUE,
-    };
-
-    var dev_create_info = c.VkDeviceCreateInfo{
-        .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = &vk13f, // through pNext the features are chained together.
-        .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
-        .pQueueCreateInfos = queue_create_infos.items.ptr,
-        .enabledExtensionCount = @intCast(device_extensions.len),
-        .ppEnabledExtensionNames = &device_extensions,
-        .pEnabledFeatures = &vk10f,
-    };
+    } orelse return Error.DeviceCreationError;
+    defer vk_util.FeaturedDeviceCreateInfo.deinit(fdev_create_info, alloc);
 
     var new_dev: c.VkDevice = undefined;
 
     if (c.vkCreateDevice(
         physdevice,
-        &dev_create_info,
+        &(fdev_create_info.*.dev_create_info),
         null,
         &new_dev,
     ) != c.VK_SUCCESS) return Error.DeviceCreationError;
@@ -246,7 +208,9 @@ pub fn init() Error!@This() {
         alloc,
         self.vk_instance,
         self.surface,
-    ) catch return Error.NoGPUFound orelse return Error.PhysDeviceSelectionError;
+    ) catch {
+        return Error.NoGPUFound;
+    } orelse return Error.PhysDeviceSelectionError;
 
     self.device = try init_device(self.phys_device, self.qf_ids);
 
