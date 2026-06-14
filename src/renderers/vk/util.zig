@@ -106,6 +106,34 @@ pub const FeaturedDeviceCreateInfo = struct {
     }
 };
 
+pub fn supports_dev_extensions(
+    alloc: std.mem.Allocator,
+    physdevice: c.VkPhysicalDevice,
+    dev_extensions: []const [*c]const u8,
+) !bool {
+    var extc: u32 = 0;
+    _ = c.vkEnumerateDeviceExtensionProperties(physdevice, null, &extc, null);
+    const supported_exts = try alloc.alloc(c.VkExtensionProperties, extc);
+    defer alloc.free(supported_exts);
+    _ = c.vkEnumerateDeviceExtensionProperties(physdevice, null, &extc, supported_exts.ptr);
+
+    for (dev_extensions) |d| {
+        var is_supported = false;
+        for (supported_exts) |s| {
+            if (std.mem.eql(
+                u8,
+                std.mem.sliceTo(&s.extensionName, 0),
+                std.mem.sliceTo(d, 0),
+            )) {
+                is_supported = true;
+                break;
+            }
+        }
+        if (!is_supported) return false;
+    }
+    return true;
+}
+
 fn find_qf_ids(
     alloc: std.mem.Allocator,
     physdevice: c.VkPhysicalDevice,

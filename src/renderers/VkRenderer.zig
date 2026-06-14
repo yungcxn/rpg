@@ -207,8 +207,18 @@ pub fn init() Error!@This() {
     };
     defer alloc.free(qf_lists);
 
+    // physical device selection must be based on supporting multiple factors
+    // TODO: separate func?
     for (physdevices, 0..) |physdevice, i| {
-        if (qf_lists[i].complete()) {
+        const qf_support: bool = qf_lists[i].complete();
+        const dev_ext_support: bool = vk_util.supports_dev_extensions(
+            alloc,
+            physdevice,
+            device_extensions[0..],
+        ) catch return Error.OOMError;
+
+        if (qf_support and dev_ext_support) {
+            // now init_device(...) is safe
             self.phys_device = physdevice;
             self.qf_ids = qf_lists[i];
             break;
