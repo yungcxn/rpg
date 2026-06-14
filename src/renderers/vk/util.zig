@@ -144,17 +144,25 @@ fn find_qf_ids(
     return indices;
 }
 
+fn alloc_physdevice_list(
+    alloc: std.mem.Allocator,
+    instance: c.VkInstance,
+) ![]c.VkPhysicalDevice {
+    var devc: u32 = 0;
+    _ = c.vkEnumeratePhysicalDevices(instance, &devc, null); // to get devicecount
+    const physdevices = try alloc.alloc(c.VkPhysicalDevice, devc);
+    _ = c.vkEnumeratePhysicalDevices(instance, &devc, physdevices.ptr);
+    return physdevices;
+}
+
 // important: it returns the queuefamilyids aswell since we do not need to recalc them later
 pub fn get_physdevice_and_qf(
     alloc: std.mem.Allocator,
     instance: c.VkInstance,
     surface: c.VkSurfaceKHR,
 ) std.mem.Allocator.Error!?struct { c.VkPhysicalDevice, QueueFamilyIds } {
-    var devc: u32 = 0;
-    _ = c.vkEnumeratePhysicalDevices(instance, &devc, null); // to get devicecount
-    const physdevices = try alloc.alloc(c.VkPhysicalDevice, devc);
+    const physdevices: []c.VkPhysicalDevice = try alloc_physdevice_list(alloc, instance);
     defer alloc.free(physdevices);
-    _ = c.vkEnumeratePhysicalDevices(instance, &devc, physdevices.ptr);
 
     for (physdevices) |physdevice| {
         const indices = try find_qf_ids(
