@@ -1,9 +1,10 @@
 const c = @import("c_vk_glfw");
 const std = @import("std");
+const alloc = std.heap.page_allocator; // TODO: better allocator
 const builtin = @import("builtin");
 const vk_util = @import("vk/util.zig");
 const QueueFamilyIds = vk_util.QueueFamilyIds;
-const alloc = std.heap.page_allocator; // TODO: better allocator
+const hack = @import("../util/hack.zig");
 
 const enable_validation_layers: bool = builtin.mode == .Debug;
 
@@ -11,21 +12,21 @@ const validation_layers = [_][*c]const u8{
     "VK_LAYER_KHRONOS_validation",
 };
 
-const extensions =
-    (if (builtin.os.tag == .macos) [_][*c]const u8{
-        c.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
-    } else [0][*c]const u8{}) ++
-    (if (enable_validation_layers) [_][*c]const u8{
-        c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-    } else [0][*c]const u8{});
+const extensions = hack.conditioned_build_arr(
+    [*c]const u8,
+    .{
+        (enable_validation_layers), .{c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+        (builtin.os.tag == .macos), .{c.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME},
+    },
+);
 
-const device_extensions =
-    (if (builtin.os.tag == .macos) [_][*c]const u8{
-        "VK_KHR_portability_subset", // required by moltenvk on macos
-    } else [0][*c]const u8{}) ++
-    [_][*c]const u8{
-        c.VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    };
+const device_extensions = hack.conditioned_build_arr(
+    [*c]const u8,
+    .{
+        (builtin.os.tag == .macos), .{"VK_KHR_portability_subset"},
+        (true),                     .{c.VK_KHR_SWAPCHAIN_EXTENSION_NAME},
+    },
+);
 
 const app = "RPG";
 
@@ -87,12 +88,9 @@ fn init_device(physdevice: c.VkPhysicalDevice, qf_ids: QueueFamilyIds) Error!c.V
 
     var new_dev: c.VkDevice = undefined;
 
-    if (c.vkCreateDevice(
-        physdevice,
-        &(fdev_create_info.*.dev_create_info),
-        null,
-        &new_dev,
-    ) != c.VK_SUCCESS) return Error.DeviceCreationError;
+    const d_ci = (fdev_create_info.*.dev_create_info);
+    if (c.vkCreateDevice(physdevice, &d_ci, null, &new_dev) != c.VK_SUCCESS)
+        return Error.DeviceCreationError;
 
     return new_dev;
 }

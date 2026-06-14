@@ -188,3 +188,47 @@ pub fn complex_parsetostruct(
     }
     return toret;
 }
+
+fn ConditionedBuildArr(T: type, comptime cond_arr_ziptuple: anytype) type {
+    var count: comptime_int = 0;
+    inline for (cond_arr_ziptuple, 0..) |item, i| {
+        if (comptime i % 2 == 0) { // condition
+            if (item) {
+                const elemtuple = cond_arr_ziptuple[i + 1];
+                inline for (elemtuple) |_| {
+                    count += 1;
+                }
+            }
+        }
+    }
+    return [count]T;
+}
+
+pub fn conditioned_build_arr(
+    ArrType: type,
+    comptime cond_arr_ziptuple: anytype, // .{cond, .{arr}, cond, .{arr}, ...}
+) ConditionedBuildArr(ArrType, cond_arr_ziptuple) {
+    var result: ConditionedBuildArr(ArrType, cond_arr_ziptuple) = undefined;
+    comptime var count: comptime_int = 0;
+    inline for (cond_arr_ziptuple, 0..) |item, i| {
+        if (comptime i % 2 == 0) { // condition
+            if (item) {
+                const elemtuple = cond_arr_ziptuple[i + 1];
+                inline for (elemtuple) |elem| {
+                    result[count] = elem;
+                    count += 1;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+test "conditioned_build_arr" {
+    const arr = conditioned_build_arr(u8, .{
+        (true),  .{ 1, 2 },
+        (false), .{ 3, 4, 5 },
+        (true),  .{6},
+    });
+    try std.testing.expect(std.mem.eql(u8, &arr, &[_]u8{ 1, 2, 6 }));
+}
