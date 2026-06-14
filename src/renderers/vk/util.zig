@@ -144,7 +144,7 @@ fn find_qf_ids(
     return indices;
 }
 
-fn alloc_physdevice_list(
+pub fn alloc_physdevice_slice(
     alloc: std.mem.Allocator,
     instance: c.VkInstance,
 ) ![]c.VkPhysicalDevice {
@@ -155,28 +155,16 @@ fn alloc_physdevice_list(
     return physdevices;
 }
 
-// important: it returns the queuefamilyids aswell since we do not need to recalc them later
-pub fn get_physdevice_and_qf(
+pub fn alloc_qf_slice(
     alloc: std.mem.Allocator,
-    instance: c.VkInstance,
+    physdevices: []c.VkPhysicalDevice,
     surface: c.VkSurfaceKHR,
-) std.mem.Allocator.Error!?struct { c.VkPhysicalDevice, QueueFamilyIds } {
-    const physdevices: []c.VkPhysicalDevice = try alloc_physdevice_list(alloc, instance);
-    defer alloc.free(physdevices);
-
-    for (physdevices) |physdevice| {
-        const indices = try find_qf_ids(
-            alloc,
-            physdevice,
-            surface,
-        );
-
-        if (indices.complete()) {
-            return .{ physdevice, indices };
-        }
+) ![]QueueFamilyIds {
+    var qf_lists = try alloc.alloc(QueueFamilyIds, physdevices.len);
+    for (physdevices, 0..) |physdevice, i| {
+        qf_lists[i] = try find_qf_ids(alloc, physdevice, surface);
     }
-
-    return null;
+    return qf_lists;
 }
 
 pub fn check_validation_layer_support(

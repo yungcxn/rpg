@@ -29,15 +29,15 @@ const device_extensions =
 
 const app = "RPG";
 
-window: *c.GLFWwindow,
-vk_instance: c.VkInstance,
-debug_messenger: c.VkDebugUtilsMessengerEXT, // only for debug
-surface: c.VkSurfaceKHR,
-phys_device: c.VkPhysicalDevice,
-qf_ids: QueueFamilyIds,
-device: c.VkDevice, // gpu device *handle*
-present_q: c.VkQueue,
-graphics_q: c.VkQueue,
+window: ?*c.GLFWwindow = null,
+vk_instance: c.VkInstance = null,
+debug_messenger: c.VkDebugUtilsMessengerEXT = null, // only for debug
+surface: c.VkSurfaceKHR = null,
+phys_device: c.VkPhysicalDevice = null,
+qf_ids: QueueFamilyIds = undefined,
+device: c.VkDevice = null, // gpu device *handle*
+present_q: c.VkQueue = null,
+graphics_q: c.VkQueue = null,
 
 pub const Error = error{
     OOMError,
@@ -48,6 +48,7 @@ pub const Error = error{
     DebugMessengerSetupError,
     NoGPUFound,
     PhysDeviceSelectionError,
+    FeaturedDeviceCreateInfoInitError,
     DeviceCreationError,
     QueueInitError,
     SurfaceInitError,
@@ -56,7 +57,7 @@ pub const Error = error{
 
 fn init_surface(
     vk_instance: c.VkInstance,
-    window: *c.GLFWwindow,
+    window: ?*c.GLFWwindow,
 ) Error!c.VkSurfaceKHR {
     var surface: c.VkSurfaceKHR = undefined;
     const ret = c.glfwCreateWindowSurface(vk_instance, window, null, &surface);
@@ -81,7 +82,7 @@ fn init_device(physdevice: c.VkPhysicalDevice, qf_ids: QueueFamilyIds) Error!c.V
         device_extensions[0..],
     ) catch {
         return Error.OOMError;
-    } orelse return Error.DeviceCreationError;
+    } orelse return Error.FeaturedDeviceCreateInfoInitError;
     defer vk_util.FeaturedDeviceCreateInfo.deinit(fdev_create_info, alloc);
 
     var new_dev: c.VkDevice = undefined;
@@ -185,18 +186,10 @@ fn init_vk_instance() Error!c.VkInstance {
 }
 
 pub fn init() Error!@This() {
-    var self = @This(){
-        .window = try init_window(),
-        .vk_instance = try init_vk_instance(),
-        .debug_messenger = null,
-        .surface = null,
-        .phys_device = null,
-        .qf_ids = QueueFamilyIds{},
-        .device = null,
+    var self = @This(){};
 
-        .present_q = null,
-        .graphics_q = null,
-    };
+    self.window = try init_window();
+    self.vk_instance = try init_vk_instance();
 
     if (comptime enable_validation_layers) {
         self.debug_messenger = try init_debug_messenger(self.vk_instance);
@@ -204,13 +197,23 @@ pub fn init() Error!@This() {
 
     self.surface = try init_surface(self.vk_instance, self.window);
 
-    self.phys_device, self.qf_ids = vk_util.get_physdevice_and_qf(
-        alloc,
-        self.vk_instance,
-        self.surface,
-    ) catch {
-        return Error.NoGPUFound;
-    } orelse return Error.PhysDeviceSelectionError;
+    const physdevices = vk_util.alloc_physdevice_slice(alloc, self.vk_instance) catch {
+        return Error.OOMError;
+    };
+    defer alloc.free(physdevices);
+
+    const qf_lists = vk_util.alloc_qf_slice(alloc, physdevices, self.surface) catch {
+        return Error.OOMError;
+    };
+    defer alloc.free(qf_lists);
+
+    for (physdevices, 0..) |physdevice, i| {
+        if (qf_lists[i].complete()) {
+            self.phys_device = physdevice;
+            self.qf_ids = qf_lists[i];
+            break;
+        }
+    }
 
     self.device = try init_device(self.phys_device, self.qf_ids);
 
