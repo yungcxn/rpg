@@ -156,6 +156,162 @@ pub const FeaturedDeviceCreateInfo = struct {
     }
 };
 
+pub const SwapChainHelpers = struct {
+    pub const SupportDetails = struct {
+        capabilities: c.VkSurfaceCapabilitiesKHR,
+        formats: ?[]c.VkSurfaceFormatKHR = null,
+        present_modes: ?[]c.VkPresentModeKHR = null,
+
+        const Error = error{ OOMError, VkQueryError };
+
+        pub fn init(
+            alloc: std.mem.Allocator,
+            physdevice: c.VkPhysicalDevice,
+            surface: c.VkSurfaceKHR,
+        ) !SupportDetails {
+            var details = SupportDetails{
+                .capabilities = undefined,
+            };
+
+            const ret = c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                physdevice,
+                surface,
+                &details.capabilities,
+            );
+
+            if (ret != c.VK_SUCCESS) {
+                std.log.err("Failed to query swap chain support details ({})", .{ret});
+                return Error.VkQueryError;
+            }
+
+            var formatc: u32 = 0;
+            const ret2 = c.vkGetPhysicalDeviceSurfaceFormatsKHR(
+                physdevice,
+                surface,
+                &formatc,
+                null,
+            );
+
+            if (ret2 != c.VK_SUCCESS) {
+                std.log.err("Failed to query swap chain surface formats ({})", .{ret2});
+                return Error.VkQueryError;
+            }
+
+            if (formatc != 0) {
+                details.formats = alloc.alloc(c.VkSurfaceFormatKHR, formatc) catch {
+                    return Error.OOMError;
+                };
+
+                const ret3 = c.vkGetPhysicalDeviceSurfaceFormatsKHR(
+                    physdevice,
+                    surface,
+                    &formatc,
+                    details.formats.?.ptr,
+                );
+
+                if (ret3 != c.VK_SUCCESS) {
+                    std.log.err("Failed to query swap chain surface formats ({})", .{ret3});
+                    return Error.VkQueryError;
+                }
+            }
+
+            var present_modec: u32 = 0;
+            const ret4 = c.vkGetPhysicalDeviceSurfacePresentModesKHR(
+                physdevice,
+                surface,
+                &present_modec,
+                null,
+            );
+            if (ret4 != c.VK_SUCCESS) {
+                std.log.err("Failed to query swap chain present modes ({})", .{ret4});
+                return Error.VkQueryError;
+            }
+
+            if (present_modec != 0) {
+                details.present_modes = alloc.alloc(c.VkPresentModeKHR, present_modec) catch {
+                    return Error.OOMError;
+                };
+                const ret5 = c.vkGetPhysicalDeviceSurfacePresentModesKHR(
+                    physdevice,
+                    surface,
+                    &present_modec,
+                    details.present_modes.?.ptr,
+                );
+                if (ret5 != c.VK_SUCCESS) {
+                    std.log.err("Failed to query swap chain present modes ({})", .{ret5});
+                    return Error.VkQueryError;
+                }
+            }
+
+            return details;
+        }
+
+        pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+            if (self.formats) |f| alloc.free(f);
+            if (self.present_modes) |pm| alloc.free(pm);
+        }
+
+        pub fn adequate(self: @This()) bool {
+            return self.formats != null and self.present_modes != null;
+        }
+    };
+
+    pub fn choose_swap_surface_format(
+        available_formats: []c.VkSurfaceFormatKHR,
+    ) c.VkSurfaceFormatKHR {
+        for (available_formats) |f| {
+            if (f.format == c.VK_FORMAT_B8G8R8A8_SRGB and
+                f.colorSpace == c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            {
+                return f;
+            }
+        }
+        return available_formats[0];
+    }
+
+    pub fn choose_swap_present_mode(
+        available_present_modes: []c.VkPresentModeKHR,
+    ) c.VkPresentModeKHR {
+        for (available_present_modes) |pm| {
+            if (pm == c.VK_PRESENT_MODE_MAILBOX_KHR) {
+                return pm;
+            }
+        }
+        return c.VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    pub fn choose_swap_extent(
+        caps: c.VkSurfaceCapabilitiesKHR,
+        window: ?*c.GLFWwindow,
+    ) c.VkExtent2D {
+        if (caps.currentExtent.width != std.math.maxInt(u32)) {
+            return caps.currentExtent;
+        } else {
+            // uint needed for getframebuffersize
+            var c_i_wh = @Vector(2, c_int){ 0, 0 };
+            c.glfwGetFramebufferSize(window, &c_i_wh[0], &c_i_wh[1]);
+            const u_wh = @Vector(2, u32){
+                @intCast(c_i_wh[0]),
+                @intCast(c_i_wh[1]),
+            };
+
+            const actual_extent2d = c.VkExtent2D{
+                .width = std.math.clamp(
+                    u_wh[0],
+                    caps.minImageExtent.width,
+                    caps.maxImageExtent.width,
+                ),
+                .height = std.math.clamp(
+                    u_wh[1],
+                    caps.minImageExtent.height,
+                    caps.maxImageExtent.height,
+                ),
+            };
+            return actual_extent2d;
+        }
+    }
+};
+
 pub fn supports_dev_extensions(
     alloc: std.mem.Allocator,
     physdevice: c.VkPhysicalDevice,
@@ -306,7 +462,7 @@ pub fn destroy_debug_utils_messenger_ext(
     );
 }
 
-// call conv should be changed when support for Windows is introduced
+// TODO call conv should be changed when support for Windows is introduced
 pub fn debug_callback(
     message_severity: c.VkDebugUtilsMessageSeverityFlagBitsEXT,
     message_type: c.VkDebugUtilsMessageTypeFlagsEXT,

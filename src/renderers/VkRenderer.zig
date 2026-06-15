@@ -4,6 +4,8 @@ const alloc = std.heap.page_allocator; // TODO: better allocator
 const builtin = @import("builtin");
 const vk_util = @import("vk/util.zig");
 const QueueFamilyIds = vk_util.QueueFamilyIds;
+const FeaturedDeviceCreateInfo = vk_util.FeaturedDeviceCreateInfo;
+const SwapChainHelpers = vk_util.SwapChainHelpers;
 const hack = @import("../util/hack.zig");
 
 const enable_validation_layers: bool = builtin.mode == .Debug;
@@ -35,10 +37,10 @@ vk_instance: c.VkInstance = null,
 debug_messenger: c.VkDebugUtilsMessengerEXT = null, // only for debug
 surface: c.VkSurfaceKHR = null,
 phys_device: c.VkPhysicalDevice = null,
-qf_ids: QueueFamilyIds = undefined,
 device: c.VkDevice = null, // gpu device *handle*
 present_q: c.VkQueue = null,
 graphics_q: c.VkQueue = null,
+swap_chain: c.VkSwapchainKHR = null,
 
 pub const Error = error{
     OOMError,
@@ -54,7 +56,75 @@ pub const Error = error{
     QueueInitError,
     SurfaceInitError,
     QueueFamilyIdxNotFound,
+    SwapChainCreationError,
 };
+
+fn init_swap_chain(
+    support_details: SwapChainHelpers.SupportDetails,
+    window: ?*c.GLFWwindow,
+    surface: c.VkSurfaceKHR,
+    qf_ids: QueueFamilyIds,
+    device: c.VkDevice,
+) !c.VkSwapchainKHR {
+    const surface_format: c.VkSurfaceFormatKHR = SwapChainHelpers.choose_swap_surface_format(
+        support_details.formats.?,
+    );
+
+    const present_mode: c.VkPresentModeKHR = SwapChainHelpers.choose_swap_present_mode(
+        support_details.present_modes.?,
+    );
+
+    const extent: c.VkExtent2D = SwapChainHelpers.choose_swap_extent(
+        support_details.capabilities,
+        window,
+    );
+
+    var imagec: u32 = support_details.capabilities.minImageCount + 1;
+    if (support_details.capabilities.maxImageCount > 0 and
+        imagec > support_details.capabilities.maxImageCount)
+    {
+        imagec = support_details.capabilities.maxImageCount;
+    }
+
+    var swap_chain_ci = c.VkSwapchainCreateInfoKHR{
+        .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface = surface,
+        .minImageCount = imagec,
+        .imageFormat = surface_format.format,
+        .imageColorSpace = surface_format.colorSpace,
+        .imageExtent = extent,
+        .imageArrayLayers = 1,
+        .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    };
+
+    if (qf_ids.graphics != qf_ids.present) {
+        swap_chain_ci.imageSharingMode = c.VK_SHARING_MODE_CONCURRENT;
+        swap_chain_ci.queueFamilyIndexCount = 2;
+        swap_chain_ci.pQueueFamilyIndices = &[2]u32{
+            qf_ids.graphics.?,
+            qf_ids.present.?,
+        };
+    } else {
+        swap_chain_ci.imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE;
+        swap_chain_ci.queueFamilyIndexCount = 0;
+        swap_chain_ci.pQueueFamilyIndices = null;
+    }
+
+    swap_chain_ci.preTransform = support_details.capabilities.currentTransform;
+    swap_chain_ci.compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    swap_chain_ci.presentMode = present_mode;
+    swap_chain_ci.clipped = c.VK_TRUE;
+    swap_chain_ci.oldSwapchain = null;
+
+    var swap_chain: c.VkSwapchainKHR = undefined;
+    const ret = c.vkCreateSwapchainKHR(device, &swap_chain_ci, null, &swap_chain);
+    if (ret != c.VK_SUCCESS) {
+        std.log.err("Failed to create swap chain ({})", .{ret});
+        return Error.SwapChainCreationError;
+    }
+
+    return swap_chain;
+}
 
 fn init_surface(
     vk_instance: c.VkInstance,
@@ -77,14 +147,14 @@ fn init_queue(dev: c.VkDevice, qf_id: u32) Error!c.VkQueue {
 }
 
 fn init_device(physdevice: c.VkPhysicalDevice, qf_ids: QueueFamilyIds) Error!c.VkDevice {
-    const fdev_create_info = vk_util.FeaturedDeviceCreateInfo.init(
+    const fdev_create_info = FeaturedDeviceCreateInfo.init(
         alloc,
         qf_ids,
         device_extensions[0..],
     ) catch {
         return Error.OOMError;
     } orelse return Error.FeaturedDeviceCreateInfoInitError;
-    defer vk_util.FeaturedDeviceCreateInfo.deinit(fdev_create_info, alloc);
+    defer FeaturedDeviceCreateInfo.deinit(fdev_create_info, alloc);
 
     var new_dev: c.VkDevice = undefined;
 
@@ -207,26 +277,48 @@ pub fn init() Error!@This() {
 
     // physical device selection must be based on supporting multiple factors
     // TODO: separate func?
+    // these vars need to be found for physdevice
+    var swap_chain_support: SwapChainHelpers.SupportDetails = undefined;
+
+    var qf_ids: QueueFamilyIds = undefined;
     for (physdevices, 0..) |physdevice, i| {
-        const qf_support: bool = qf_lists[i].complete();
+        qf_ids = qf_lists[i];
         const dev_ext_support: bool = vk_util.supports_dev_extensions(
             alloc,
             physdevice,
             device_extensions[0..],
         ) catch return Error.OOMError;
 
-        if (qf_support and dev_ext_support) {
-            // now init_device(...) is safe
-            self.phys_device = physdevice;
-            self.qf_ids = qf_lists[i];
-            break;
+        if (dev_ext_support) {
+            swap_chain_support = SwapChainHelpers.SupportDetails.init(
+                alloc,
+                physdevice,
+                self.surface,
+            ) catch return Error.OOMError;
+
+            if (qf_ids.complete() and swap_chain_support.adequate()) {
+                // now init_device(...) is safe
+                self.phys_device = physdevice;
+                break;
+            }
+
+            swap_chain_support.deinit(alloc);
         }
     }
+    defer swap_chain_support.deinit(alloc);
 
-    self.device = try init_device(self.phys_device, self.qf_ids);
+    self.device = try init_device(self.phys_device, qf_ids);
 
-    self.present_q = try init_queue(self.device, self.qf_ids.present.?);
-    self.graphics_q = try init_queue(self.device, self.qf_ids.graphics.?);
+    self.present_q = try init_queue(self.device, qf_ids.present.?);
+    self.graphics_q = try init_queue(self.device, qf_ids.graphics.?);
+
+    self.swap_chain = try init_swap_chain(
+        swap_chain_support,
+        self.window,
+        self.surface,
+        qf_ids,
+        self.device,
+    );
 
     return self;
 }
@@ -240,6 +332,7 @@ pub fn deinit(self: *@This()) void {
         );
     }
 
+    c.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
     c.vkDestroyDevice(self.device, null);
     c.vkDestroySurfaceKHR(self.vk_instance, self.surface, null);
     c.vkDestroyInstance(self.vk_instance, null);
