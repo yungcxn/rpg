@@ -2,11 +2,14 @@ const c = @import("c_vk_glfw");
 const std = @import("std");
 const alloc = std.heap.page_allocator; // TODO: better allocator
 const builtin = @import("builtin");
-const vk_util = @import("vk/util.zig");
-const QueueFamilyIds = vk_util.QueueFamilyIds;
-const FeaturedDeviceCreateInfo = vk_util.FeaturedDeviceCreateInfo;
-const SwapChainHelpers = vk_util.SwapChainHelpers;
+
 const hack = @import("../util/hack.zig");
+
+const vk_util = @import("vk/util.zig");
+const vk_debug = @import("vk/debug.zig");
+const QueueFamilyIds = @import("vk/QueueFamilyIds.zig");
+const FeatDeviceCreateInfo = @import("vk/FeatDeviceCreateInfo.zig");
+const SwapChain = @import("vk/SwapChain.zig");
 
 const enable_validation_layers: bool = builtin.mode == .Debug;
 
@@ -40,7 +43,7 @@ phys_device: c.VkPhysicalDevice = null,
 device: c.VkDevice = null, // gpu device *handle*
 present_q: c.VkQueue = null,
 graphics_q: c.VkQueue = null,
-swap_chain: c.VkSwapchainKHR = null,
+swap_chain_data: ?SwapChain.Data = null,
 
 pub const Error = error{
     OOMError,
@@ -51,80 +54,13 @@ pub const Error = error{
     DebugMessengerSetupError,
     NoGPUFound,
     PhysDeviceSelectionError,
-    FeaturedDeviceCreateInfoInitError,
+    FeatDeviceCreateInfoInitError,
     DeviceCreationError,
     QueueInitError,
     SurfaceInitError,
     QueueFamilyIdxNotFound,
-    SwapChainCreationError,
+    SwapChainDataCreationError,
 };
-
-fn init_swap_chain(
-    support_details: SwapChainHelpers.SupportDetails,
-    window: ?*c.GLFWwindow,
-    surface: c.VkSurfaceKHR,
-    qf_ids: QueueFamilyIds,
-    device: c.VkDevice,
-) !c.VkSwapchainKHR {
-    const surface_format: c.VkSurfaceFormatKHR = SwapChainHelpers.choose_swap_surface_format(
-        support_details.formats.?,
-    );
-
-    const present_mode: c.VkPresentModeKHR = SwapChainHelpers.choose_swap_present_mode(
-        support_details.present_modes.?,
-    );
-
-    const extent: c.VkExtent2D = SwapChainHelpers.choose_swap_extent(
-        support_details.capabilities,
-        window,
-    );
-
-    var imagec: u32 = support_details.capabilities.minImageCount + 1;
-    if (support_details.capabilities.maxImageCount > 0 and
-        imagec > support_details.capabilities.maxImageCount)
-    {
-        imagec = support_details.capabilities.maxImageCount;
-    }
-
-    var swap_chain_ci = c.VkSwapchainCreateInfoKHR{
-        .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-        .surface = surface,
-        .minImageCount = imagec,
-        .imageFormat = surface_format.format,
-        .imageColorSpace = surface_format.colorSpace,
-        .imageExtent = extent,
-        .imageArrayLayers = 1,
-        .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-    };
-
-    if (qf_ids.graphics != qf_ids.present) {
-        swap_chain_ci.imageSharingMode = c.VK_SHARING_MODE_CONCURRENT;
-        swap_chain_ci.queueFamilyIndexCount = 2;
-        swap_chain_ci.pQueueFamilyIndices = &[2]u32{
-            qf_ids.graphics.?,
-            qf_ids.present.?,
-        };
-    } else {
-        swap_chain_ci.imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE;
-        swap_chain_ci.queueFamilyIndexCount = 0;
-        swap_chain_ci.pQueueFamilyIndices = null;
-    }
-
-    swap_chain_ci.preTransform = support_details.capabilities.currentTransform;
-    swap_chain_ci.compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    swap_chain_ci.presentMode = present_mode;
-    swap_chain_ci.clipped = c.VK_TRUE;
-    swap_chain_ci.oldSwapchain = null;
-
-    var swap_chain: c.VkSwapchainKHR = undefined;
-    const ret = c.vkCreateSwapchainKHR(device, &swap_chain_ci, null, &swap_chain);
-    if (ret != c.VK_SUCCESS) {
-        std.log.err("Failed to create swap chain ({})", .{ret});
-        return Error.SwapChainCreationError;
-    }
-
-    return swap_chain;
-}
 
 fn init_surface(
     vk_instance: c.VkInstance,
@@ -147,14 +83,14 @@ fn init_queue(dev: c.VkDevice, qf_id: u32) Error!c.VkQueue {
 }
 
 fn init_device(physdevice: c.VkPhysicalDevice, qf_ids: QueueFamilyIds) Error!c.VkDevice {
-    const fdev_create_info = FeaturedDeviceCreateInfo.init(
+    const fdev_create_info = FeatDeviceCreateInfo.init(
         alloc,
         qf_ids,
         device_extensions[0..],
     ) catch {
         return Error.OOMError;
-    } orelse return Error.FeaturedDeviceCreateInfoInitError;
-    defer FeaturedDeviceCreateInfo.deinit(fdev_create_info, alloc);
+    } orelse return Error.FeatDeviceCreateInfoInitError;
+    defer FeatDeviceCreateInfo.deinit(fdev_create_info, alloc);
 
     var new_dev: c.VkDevice = undefined;
 
@@ -170,9 +106,9 @@ fn init_debug_messenger(instance: c.VkInstance) Error!c.VkDebugUtilsMessengerEXT
     var debug_messenger: c.VkDebugUtilsMessengerEXT = undefined;
 
     var dbg_create_info: c.VkDebugUtilsMessengerCreateInfoEXT =
-        vk_util.get_debug_utils_messenger_create_info();
+        vk_debug.get_debug_utils_messenger_create_info();
 
-    const retcode = vk_util.create_debug_utils_messenger_ext(
+    const retcode = vk_debug.create_debug_utils_messenger_ext(
         instance,
         &dbg_create_info,
         null,
@@ -200,7 +136,7 @@ fn init_window() Error!*c.GLFWwindow {
 
 fn init_vk_instance() Error!c.VkInstance {
     if (enable_validation_layers) {
-        const is_sup: bool = vk_util.check_validation_layer_support(
+        const is_sup: bool = vk_debug.check_validation_layer_support(
             alloc,
             validation_layers.len,
             validation_layers,
@@ -235,7 +171,7 @@ fn init_vk_instance() Error!c.VkInstance {
         create_info.enabledLayerCount = @intCast(validation_layers.len);
         create_info.ppEnabledLayerNames = &validation_layers;
 
-        dbg_create_info = vk_util.get_debug_utils_messenger_create_info();
+        dbg_create_info = vk_debug.get_debug_utils_messenger_create_info();
         create_info.pNext = &dbg_create_info;
     }
 
@@ -278,8 +214,7 @@ pub fn init() Error!@This() {
     // physical device selection must be based on supporting multiple factors
     // TODO: separate func?
     // these vars need to be found for physdevice
-    var swap_chain_support: SwapChainHelpers.SupportDetails = undefined;
-
+    var swap_chain_support: ?SwapChain.SupportDetails = null;
     var qf_ids: QueueFamilyIds = undefined;
     for (physdevices, 0..) |physdevice, i| {
         qf_ids = qf_lists[i];
@@ -290,49 +225,53 @@ pub fn init() Error!@This() {
         ) catch return Error.OOMError;
 
         if (dev_ext_support) {
-            swap_chain_support = SwapChainHelpers.SupportDetails.init(
+            if (swap_chain_support != null) {
+                swap_chain_support.?.deinit(alloc);
+            }
+            swap_chain_support = SwapChain.SupportDetails.init(
                 alloc,
                 physdevice,
                 self.surface,
             ) catch return Error.OOMError;
 
-            if (qf_ids.complete() and swap_chain_support.adequate()) {
+            if (qf_ids.complete() and swap_chain_support.?.adequate()) {
                 // now init_device(...) is safe
                 self.phys_device = physdevice;
                 break;
             }
-
-            swap_chain_support.deinit(alloc);
         }
     }
-    defer swap_chain_support.deinit(alloc);
+    if (self.phys_device == null) return Error.NoGPUFound;
+
+    defer if (swap_chain_support) |*s| s.deinit(alloc);
 
     self.device = try init_device(self.phys_device, qf_ids);
 
     self.present_q = try init_queue(self.device, qf_ids.present.?);
     self.graphics_q = try init_queue(self.device, qf_ids.graphics.?);
 
-    self.swap_chain = try init_swap_chain(
-        swap_chain_support,
+    self.swap_chain_data = SwapChain.Data.init(
+        alloc,
+        swap_chain_support.?,
         self.window,
         self.surface,
         qf_ids,
         self.device,
-    );
+    ) catch return Error.SwapChainDataCreationError;
 
     return self;
 }
 
 pub fn deinit(self: *@This()) void {
     if (comptime enable_validation_layers) {
-        vk_util.destroy_debug_utils_messenger_ext(
+        vk_debug.destroy_debug_utils_messenger_ext(
             self.vk_instance,
             self.debug_messenger,
             null,
         );
     }
 
-    c.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
+    if (self.swap_chain_data) |*scd| scd.deinit(alloc, self.device);
     c.vkDestroyDevice(self.device, null);
     c.vkDestroySurfaceKHR(self.vk_instance, self.surface, null);
     c.vkDestroyInstance(self.vk_instance, null);
