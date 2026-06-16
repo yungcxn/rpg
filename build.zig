@@ -1,6 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const build_spirv = @import("tools/build_spirv.zig");
+const cdep_transl = @import("tools/cdep_transl.zig");
+const CDependency = cdep_transl.CDependency;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -14,17 +18,14 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    const c_vk_glfw = b.addTranslateC(.{
-        .root_source_file = b.path("cdeps/vk_glfw.h"),
-        .target = target,
-        .optimize = optimize,
+    cdep_transl.add_cdep(b, exe.root_module, CDependency{
+        .path = "cdeps/vk_glfw.h",
+        .import_name = "c_vk_glfw",
+        .libs_to_link = &.{ "vulkan", "glfw" },
         .link_libc = true,
-    });
+    }, target, optimize);
 
-    c_vk_glfw.linkSystemLibrary("vulkan", .{ .needed = true });
-    c_vk_glfw.linkSystemLibrary("glfw", .{ .needed = true });
-
-    exe.root_module.addImport("c_vk_glfw", c_vk_glfw.createModule());
+    build_spirv.build(b, exe.root_module, optimize);
 
     b.installArtifact(exe);
 

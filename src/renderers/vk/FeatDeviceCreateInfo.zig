@@ -35,6 +35,7 @@ pub fn init(
 
     self.vk10f = c.VkPhysicalDeviceFeatures{
         .samplerAnisotropy = c.VK_TRUE,
+        .shaderInt16 = c.VK_TRUE,
     };
     self.vk12f = c.VkPhysicalDeviceVulkan12Features{
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
@@ -43,6 +44,7 @@ pub fn init(
         .descriptorBindingVariableDescriptorCount = c.VK_TRUE,
         .runtimeDescriptorArray = c.VK_TRUE,
         .bufferDeviceAddress = c.VK_TRUE,
+        .shaderInt8 = c.VK_TRUE,
     };
     self.vk13f = c.VkPhysicalDeviceVulkan13Features{
         .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,

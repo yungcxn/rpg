@@ -6,7 +6,28 @@ const Error = error{
     OOMError,
     VkPhysicalDeviceQueryError,
     VkQueryError,
+    FailedToCreateShaderModule,
 };
+
+pub fn create_shader_mod(
+    device: c.VkDevice,
+    spv: []const u8,
+) Error!c.VkShaderModule {
+    const create_info = c.VkShaderModuleCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .codeSize = spv.len,
+        .pCode = @ptrCast(@alignCast(spv.ptr)),
+    };
+
+    var shader_module: c.VkShaderModule = undefined;
+    const ret = c.vkCreateShaderModule(device, &create_info, null, &shader_module);
+    if (ret != c.VK_SUCCESS) {
+        return Error.FailedToCreateShaderModule;
+    }
+    return shader_module;
+}
 
 pub fn supports_dev_extensions(
     alloc: std.mem.Allocator,

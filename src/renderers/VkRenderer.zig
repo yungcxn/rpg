@@ -2,21 +2,20 @@ const c = @import("c_vk_glfw");
 const std = @import("std");
 const alloc = std.heap.page_allocator; // TODO: better allocator
 const builtin = @import("builtin");
-
 const hack = @import("../util/hack.zig");
-
 const vk_util = @import("vk/util.zig");
 const vk_debug = @import("vk/debug.zig");
 const QueueFamilyIds = @import("vk/QueueFamilyIds.zig");
 const FeatDeviceCreateInfo = @import("vk/FeatDeviceCreateInfo.zig");
 const SwapChain = @import("vk/SwapChain.zig");
 
-const enable_validation_layers: bool = builtin.mode == .Debug;
+const vert_spv align(@alignOf(u32)) = @embedFile("vertex_shader").*;
+const frag_spv align(@alignOf(u32)) = @embedFile("fragment_shader").*;
 
+const enable_validation_layers: bool = builtin.mode == .Debug;
 const validation_layers = [_][*c]const u8{
     "VK_LAYER_KHRONOS_validation",
 };
-
 const extensions = hack.conditioned_build_arr(
     [*c]const u8,
     .{
@@ -24,7 +23,6 @@ const extensions = hack.conditioned_build_arr(
         (builtin.os.tag == .macos), .{c.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME},
     },
 );
-
 const device_extensions = hack.conditioned_build_arr(
     [*c]const u8,
     .{
@@ -32,7 +30,6 @@ const device_extensions = hack.conditioned_build_arr(
         (true),                     .{c.VK_KHR_SWAPCHAIN_EXTENSION_NAME},
     },
 );
-
 const app = "RPG";
 
 window: ?*c.GLFWwindow = null,
@@ -60,7 +57,40 @@ pub const Error = error{
     SurfaceInitError,
     QueueFamilyIdxNotFound,
     SwapChainDataCreationError,
+    InitGraphicsPipelineError,
 };
+
+fn init_graphics_pipeline(device: c.VkDevice) !void {
+    const vert_module = try vk_util.create_shader_mod(device, &vert_spv);
+    const frag_module = try vk_util.create_shader_mod(device, &frag_spv);
+
+    const shader_stages = [2]c.VkPipelineShaderStageCreateInfo{
+        .{
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
+            .module = vert_module,
+            .pName = "main", // matches `export fn main()` in vertex-zig-file
+            .pSpecializationInfo = null,
+        },
+        .{
+            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = frag_module,
+            .pName = "main", // same for fragment-zig-file
+            .pSpecializationInfo = null,
+        },
+    };
+
+    _ = shader_stages;
+    // TODO NEXT https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions
+
+    defer c.vkDestroyShaderModule(device, vert_module, null);
+    defer c.vkDestroyShaderModule(device, frag_module, null);
+}
 
 fn init_surface(
     vk_instance: c.VkInstance,
@@ -258,6 +288,10 @@ pub fn init() Error!@This() {
         qf_ids,
         self.device,
     ) catch return Error.SwapChainDataCreationError;
+
+    init_graphics_pipeline(self.device) catch {
+        return Error.InitGraphicsPipelineError;
+    };
 
     return self;
 }
