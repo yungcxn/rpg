@@ -116,8 +116,64 @@ pub const Data = struct {
     imgs: ?[]c.VkImage = null,
     img_format: c.VkFormat = 0,
     extent: c.VkExtent2D = .{ .width = 0, .height = 0 },
+    img_views: ?[]c.VkImageView = null,
 
-    const Error = error{ SwapChainCreationError, SwapChainGetImagesError, SwapChainDataCreationError };
+    const Error = error{
+        SwapChainCreationError,
+        SwapChainGetImagesError,
+        SwapChainDataCreationError,
+        ImageViewCreationError,
+    };
+
+    fn init_image_views(
+        alloc: std.mem.Allocator,
+        imgs: []c.VkImage,
+        img_format: c.VkFormat,
+        device: c.VkDevice,
+    ) Error![]c.VkImageView {
+        var img_views = alloc.alloc(c.VkImageView, imgs.len) catch {
+            return Error.ImageViewCreationError;
+        };
+
+        for (imgs, 0..) |img, i| {
+            const img_v_ci = c.VkImageViewCreateInfo{
+                .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = img,
+                .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+                .format = img_format,
+                .components = c.VkComponentMapping{
+                    .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                },
+                .subresourceRange = c.VkImageSubresourceRange{
+                    .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+            };
+
+            const ret = c.vkCreateImageView(
+                device,
+                &img_v_ci,
+                null,
+                &img_views[i],
+            );
+            if (ret != c.VK_SUCCESS) {
+                std.log.err("Failed to create image view ({})", .{ret});
+                for (img_views, 0..i) |iv, _| {
+                    c.vkDestroyImageView(device, iv, null);
+                }
+                alloc.free(img_views);
+                return Error.ImageViewCreationError;
+            }
+        }
+
+        return img_views;
+    }
 
     pub fn init(
         alloc: std.mem.Allocator,
@@ -205,6 +261,13 @@ pub const Data = struct {
             return Error.SwapChainGetImagesError;
         }
 
+        self.img_views = try init_image_views(
+            alloc,
+            self.imgs.?,
+            self.img_format,
+            device,
+        );
+
         return self;
     }
 
@@ -216,6 +279,14 @@ pub const Data = struct {
         if (self.swap_chain != null) {
             c.vkDestroySwapchainKHR(device, self.swap_chain, null);
             self.swap_chain = null;
+        }
+
+        if (self.img_views) |img_views| {
+            for (img_views) |iv| {
+                c.vkDestroyImageView(device, iv, null);
+            }
+            alloc.free(img_views);
+            self.img_views = null;
         }
 
         if (self.imgs) |imgs| {
