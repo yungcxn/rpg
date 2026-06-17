@@ -1,14 +1,13 @@
 const std = @import("std");
 const c = @import("c_vk_glfw");
 const util = @import("util.zig");
+const req_vksuc = util.req_vksuc;
 const QueueFamilyIds = @import("QueueFamilyIds.zig");
 
 pub const SupportDetails = struct {
     capabilities: c.VkSurfaceCapabilitiesKHR,
     formats: ?[]c.VkSurfaceFormatKHR = null,
     present_modes: ?[]c.VkPresentModeKHR = null,
-
-    const Error = error{ OOMError, VkQueryError };
 
     pub fn init(
         alloc: std.mem.Allocator,
@@ -19,76 +18,59 @@ pub const SupportDetails = struct {
             .capabilities = undefined,
         };
 
-        const ret = c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-            physdevice,
-            surface,
-            &details.capabilities,
+        try req_vksuc(
+            c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                physdevice,
+                surface,
+                &details.capabilities,
+            ),
         );
-
-        if (ret != c.VK_SUCCESS) {
-            std.log.err("Failed to query swap chain support details ({})", .{ret});
-            return Error.VkQueryError;
-        }
-
         var formatc: u32 = 0;
-        const ret2 = c.vkGetPhysicalDeviceSurfaceFormatsKHR(
-            physdevice,
-            surface,
-            &formatc,
-            null,
-        );
 
-        if (ret2 != c.VK_SUCCESS) {
-            std.log.err("Failed to query swap chain surface formats ({})", .{ret2});
-            return Error.VkQueryError;
-        }
-
-        if (formatc != 0) {
-            details.formats = alloc.alloc(c.VkSurfaceFormatKHR, formatc) catch {
-                return Error.OOMError;
-            };
-            errdefer alloc.free(details.formats.?);
-
-            const ret3 = c.vkGetPhysicalDeviceSurfaceFormatsKHR(
+        try req_vksuc(
+            c.vkGetPhysicalDeviceSurfaceFormatsKHR(
                 physdevice,
                 surface,
                 &formatc,
-                details.formats.?.ptr,
-            );
+                null,
+            ),
+        );
 
-            if (ret3 != c.VK_SUCCESS) {
-                std.log.err("Failed to query swap chain surface formats ({})", .{ret3});
-                return Error.VkQueryError;
-            }
+        if (formatc != 0) {
+            details.formats = try alloc.alloc(c.VkSurfaceFormatKHR, formatc);
+            errdefer alloc.free(details.formats.?);
+
+            try req_vksuc(
+                c.vkGetPhysicalDeviceSurfaceFormatsKHR(
+                    physdevice,
+                    surface,
+                    &formatc,
+                    details.formats.?.ptr,
+                ),
+            );
         }
 
         var present_modec: u32 = 0;
-        const ret4 = c.vkGetPhysicalDeviceSurfacePresentModesKHR(
-            physdevice,
-            surface,
-            &present_modec,
-            null,
-        );
-        if (ret4 != c.VK_SUCCESS) {
-            std.log.err("Failed to query swap chain present modes ({})", .{ret4});
-            return Error.VkQueryError;
-        }
-
-        if (present_modec != 0) {
-            details.present_modes = alloc.alloc(c.VkPresentModeKHR, present_modec) catch {
-                return Error.OOMError;
-            };
-            errdefer alloc.free(details.present_modes.?);
-            const ret5 = c.vkGetPhysicalDeviceSurfacePresentModesKHR(
+        try req_vksuc(
+            c.vkGetPhysicalDeviceSurfacePresentModesKHR(
                 physdevice,
                 surface,
                 &present_modec,
-                details.present_modes.?.ptr,
+                null,
+            ),
+        );
+
+        if (present_modec != 0) {
+            details.present_modes = try alloc.alloc(c.VkPresentModeKHR, present_modec);
+            errdefer alloc.free(details.present_modes.?);
+            try req_vksuc(
+                c.vkGetPhysicalDeviceSurfacePresentModesKHR(
+                    physdevice,
+                    surface,
+                    &present_modec,
+                    details.present_modes.?.ptr,
+                ),
             );
-            if (ret5 != c.VK_SUCCESS) {
-                std.log.err("Failed to query swap chain present modes ({})", .{ret5});
-                return Error.VkQueryError;
-            }
         }
 
         return details;
@@ -118,22 +100,13 @@ pub const Data = struct {
     extent: c.VkExtent2D = .{ .width = 0, .height = 0 },
     img_views: ?[]c.VkImageView = null,
 
-    const Error = error{
-        SwapChainCreationError,
-        SwapChainGetImagesError,
-        SwapChainDataCreationError,
-        ImageViewCreationError,
-    };
-
     fn init_image_views(
         alloc: std.mem.Allocator,
         imgs: []c.VkImage,
         img_format: c.VkFormat,
         device: c.VkDevice,
-    ) Error![]c.VkImageView {
-        var img_views = alloc.alloc(c.VkImageView, imgs.len) catch {
-            return Error.ImageViewCreationError;
-        };
+    ) ![]c.VkImageView {
+        var img_views = try alloc.alloc(c.VkImageView, imgs.len);
 
         for (imgs, 0..) |img, i| {
             const img_v_ci = c.VkImageViewCreateInfo{
@@ -156,19 +129,15 @@ pub const Data = struct {
                 },
             };
 
-            const ret = c.vkCreateImageView(
-                device,
-                &img_v_ci,
-                null,
-                &img_views[i],
+            try req_vksuc(
+                c.vkCreateImageView(device, &img_v_ci, null, &img_views[i]),
             );
-            if (ret != c.VK_SUCCESS) {
-                std.log.err("Failed to create image view ({})", .{ret});
+
+            errdefer {
                 for (img_views, 0..i) |iv, _| {
                     c.vkDestroyImageView(device, iv, null);
                 }
                 alloc.free(img_views);
-                return Error.ImageViewCreationError;
             }
         }
 
@@ -236,30 +205,18 @@ pub const Data = struct {
         swap_chain_ci.oldSwapchain = null;
 
         var swap_chain: c.VkSwapchainKHR = undefined;
-        const ret = c.vkCreateSwapchainKHR(device, &swap_chain_ci, null, &swap_chain);
-        if (ret != c.VK_SUCCESS) {
-            std.log.err("Failed to create swap chain ({})", .{ret});
-            return Error.SwapChainCreationError;
-        }
+        try req_vksuc(c.vkCreateSwapchainKHR(device, &swap_chain_ci, null, &swap_chain));
 
         self.swap_chain = swap_chain;
 
-        const ret2 = c.vkGetSwapchainImagesKHR(device, swap_chain, &imgc, null);
-        if (ret2 != c.VK_SUCCESS) {
-            std.log.err("Failed to get swap chain images ({})", .{ret2});
-            return Error.SwapChainGetImagesError;
-        }
+        try req_vksuc(c.vkGetSwapchainImagesKHR(device, swap_chain, &imgc, null));
 
         // free'd in global deinit of this
-        self.imgs = alloc.alloc(c.VkImage, imgc) catch {
-            return Error.SwapChainCreationError;
-        };
+        self.imgs = try alloc.alloc(c.VkImage, imgc);
         errdefer alloc.free(self.imgs.?);
-        const ret3 = c.vkGetSwapchainImagesKHR(device, swap_chain, &imgc, self.imgs.?.ptr);
-        if (ret3 != c.VK_SUCCESS) {
-            std.log.err("Failed to get swap chain images ({})", .{ret3});
-            return Error.SwapChainGetImagesError;
-        }
+        try req_vksuc(
+            c.vkGetSwapchainImagesKHR(device, swap_chain, &imgc, self.imgs.?.ptr),
+        );
 
         self.img_views = try init_image_views(
             alloc,

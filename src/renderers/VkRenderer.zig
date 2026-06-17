@@ -8,6 +8,7 @@ const vk_debug = @import("vk/debug.zig");
 const QueueFamilyIds = @import("vk/QueueFamilyIds.zig");
 const FeatDeviceCreateInfo = @import("vk/FeatDeviceCreateInfo.zig");
 const SwapChain = @import("vk/SwapChain.zig");
+const req_vksuc = vk_util.req_vksuc;
 
 const vert_spv align(@alignOf(u32)) = @embedFile("vertex_shader").*;
 const frag_spv align(@alignOf(u32)) = @embedFile("fragment_shader").*;
@@ -42,23 +43,8 @@ present_q: c.VkQueue = null,
 graphics_q: c.VkQueue = null,
 swap_chain_data: ?SwapChain.Data = null,
 
-pub const Error = error{
-    OOMError,
-    VkInitError,
-    WindowSetupError,
-    RenderError,
-    ValidationLayerSupportError,
-    DebugMessengerSetupError,
-    NoGPUFound,
-    PhysDeviceSelectionError,
-    FeatDeviceCreateInfoInitError,
-    DeviceCreationError,
-    QueueInitError,
-    SurfaceInitError,
-    QueueFamilyIdxNotFound,
-    SwapChainDataCreationError,
-    InitGraphicsPipelineError,
-};
+// TODO Unhandled should be specific
+pub const Error = vk_util.ZVkError;
 
 fn init_graphics_pipeline(device: c.VkDevice) !void {
     const vert_module = try vk_util.create_shader_mod(device, &vert_spv);
@@ -97,18 +83,14 @@ fn init_surface(
     window: ?*c.GLFWwindow,
 ) Error!c.VkSurfaceKHR {
     var surface: c.VkSurfaceKHR = undefined;
-    const ret = c.glfwCreateWindowSurface(vk_instance, window, null, &surface);
-    if (ret != c.VK_SUCCESS) {
-        std.log.err("Failed to create window surface: {}", .{ret});
-        return Error.SurfaceInitError;
-    }
+    try req_vksuc(c.glfwCreateWindowSurface(vk_instance, window, null, &surface));
     return surface;
 }
 
 fn init_queue(dev: c.VkDevice, qf_id: u32) Error!c.VkQueue {
     var queue: c.VkQueue = null;
     c.vkGetDeviceQueue(dev, qf_id, 0, &queue);
-    if (queue == null) return Error.QueueInitError;
+    if (queue == null) return Error.Unhandled;
     return queue;
 }
 
@@ -118,16 +100,14 @@ fn init_device(physdevice: c.VkPhysicalDevice, qf_ids: QueueFamilyIds) Error!c.V
         qf_ids,
         device_extensions[0..],
     ) catch {
-        return Error.OOMError;
-    } orelse return Error.FeatDeviceCreateInfoInitError;
+        return Error.Unhandled;
+    } orelse return Error.Unhandled;
     defer FeatDeviceCreateInfo.deinit(fdev_create_info, alloc);
 
     var new_dev: c.VkDevice = undefined;
 
     const d_ci = (fdev_create_info.*.dev_create_info);
-    if (c.vkCreateDevice(physdevice, &d_ci, null, &new_dev) != c.VK_SUCCESS)
-        return Error.DeviceCreationError;
-
+    try req_vksuc(c.vkCreateDevice(physdevice, &d_ci, null, &new_dev));
     return new_dev;
 }
 
@@ -138,17 +118,12 @@ fn init_debug_messenger(instance: c.VkInstance) Error!c.VkDebugUtilsMessengerEXT
     var dbg_create_info: c.VkDebugUtilsMessengerCreateInfoEXT =
         vk_debug.get_debug_utils_messenger_create_info();
 
-    const retcode = vk_debug.create_debug_utils_messenger_ext(
+    try req_vksuc(vk_debug.create_debug_utils_messenger_ext(
         instance,
         &dbg_create_info,
         null,
         &debug_messenger,
-    );
-
-    if (retcode != c.VK_SUCCESS) {
-        std.log.err("Failed to set up debug messenger ({})", .{retcode});
-        return Error.DebugMessengerSetupError;
-    }
+    ));
 
     return debug_messenger;
 }
@@ -159,7 +134,7 @@ fn init_window() Error!*c.GLFWwindow {
     _ = c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_FALSE);
 
     const window = c.glfwCreateWindow(500, 500, app, null, null) orelse
-        return Error.WindowSetupError;
+        return Error.Unhandled;
 
     return window;
 }
@@ -170,9 +145,9 @@ fn init_vk_instance() Error!c.VkInstance {
             alloc,
             validation_layers.len,
             validation_layers,
-        ) catch return Error.OOMError;
+        ) catch return Error.Unhandled;
 
-        if (!is_sup) return Error.ValidationLayerSupportError;
+        if (!is_sup) return Error.Unhandled;
     }
 
     const app_info: c.VkApplicationInfo = .{
@@ -185,7 +160,7 @@ fn init_vk_instance() Error!c.VkInstance {
         alloc,
         extensions.len,
         extensions,
-    ) catch return Error.OOMError;
+    ) catch return Error.Unhandled;
     defer alloc.free(required_extensions);
 
     var create_info: c.VkInstanceCreateInfo = .{
@@ -210,11 +185,7 @@ fn init_vk_instance() Error!c.VkInstance {
     }
 
     var instance: c.VkInstance = undefined;
-    const ret = c.vkCreateInstance(&create_info, null, &instance);
-    if (ret != c.VK_SUCCESS) {
-        std.log.err("Failed to create Vulkan instance ({})", .{ret});
-        return Error.VkInitError;
-    }
+    try req_vksuc(c.vkCreateInstance(&create_info, null, &instance));
 
     return instance;
 }
@@ -232,12 +203,12 @@ pub fn init() Error!@This() {
     self.surface = try init_surface(self.vk_instance, self.window);
 
     const physdevices = vk_util.alloc_physdevice_slice(alloc, self.vk_instance) catch {
-        return Error.OOMError;
+        return Error.Unhandled;
     };
     defer alloc.free(physdevices);
 
     const qf_lists = QueueFamilyIds.alloc_qf_slice(alloc, physdevices, self.surface) catch {
-        return Error.OOMError;
+        return Error.Unhandled;
     };
     defer alloc.free(qf_lists);
 
@@ -252,7 +223,7 @@ pub fn init() Error!@This() {
             alloc,
             physdevice,
             device_extensions[0..],
-        ) catch return Error.OOMError;
+        ) catch return Error.Unhandled;
 
         if (dev_ext_support) {
             if (swap_chain_support != null) {
@@ -262,7 +233,7 @@ pub fn init() Error!@This() {
                 alloc,
                 physdevice,
                 self.surface,
-            ) catch return Error.OOMError;
+            ) catch return Error.Unhandled;
 
             if (qf_ids.complete() and swap_chain_support.?.adequate()) {
                 // now init_device(...) is safe
@@ -271,7 +242,7 @@ pub fn init() Error!@This() {
             }
         }
     }
-    if (self.phys_device == null) return Error.NoGPUFound;
+    if (self.phys_device == null) return Error.Unhandled;
 
     defer if (swap_chain_support) |*s| s.deinit(alloc);
 
@@ -287,10 +258,10 @@ pub fn init() Error!@This() {
         self.surface,
         qf_ids,
         self.device,
-    ) catch return Error.SwapChainDataCreationError;
+    ) catch return Error.Unhandled;
 
     init_graphics_pipeline(self.device) catch {
-        return Error.InitGraphicsPipelineError;
+        return Error.Unhandled;
     };
 
     return self;

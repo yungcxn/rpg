@@ -92,7 +92,6 @@ pub fn destroy_debug_utils_messenger_ext(
     );
 }
 
-// TODO call conv should be changed when support for Windows is introduced
 pub fn debug_callback(
     message_severity: c.VkDebugUtilsMessageSeverityFlagBitsEXT,
     message_type: c.VkDebugUtilsMessageTypeFlagsEXT,
