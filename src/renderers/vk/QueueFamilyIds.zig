@@ -4,8 +4,8 @@ const c = @import("c_vk_glfw");
 graphics: ?u32 = null,
 present: ?u32 = null,
 
-pub fn alloc_unique_set(self: @This(), alloc: std.mem.Allocator) !?std.ArrayList(u32) {
-    if (!self.complete()) return null;
+pub fn alloc_unique_set(self: @This(), alloc: std.mem.Allocator) !std.ArrayList(u32) {
+    if (!self.complete()) return error.InvalidState;
 
     var set = std.ArrayList(u32).empty;
 

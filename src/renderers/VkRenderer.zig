@@ -43,8 +43,24 @@ present_q: c.VkQueue = null,
 graphics_q: c.VkQueue = null,
 swap_chain_data: ?SwapChain.Data = null,
 
-// TODO Unhandled should be specific
-pub const Error = vk_util.ZVkError;
+// These are errors not thrown through Vulkan/GLFW, but through this logic
+const EngineError = error{
+    OOMError,
+    QueueInitError,
+    FeatDeviceCreateInfoInitError,
+    WindowInitError,
+    CheckValidationLayerSupportError,
+    AllocPhysDeviceSliceError,
+    AllocQFSliceError,
+    SupportsDevExtensionsError,
+    SwapChainSupportDetailsInitError,
+    PhysDeviceNullError,
+    SwapChainDataInitError,
+    InitGraphicsPipelineError,
+};
+
+// this is used by Renderer as a subtrait
+pub const Error = vk_util.ZVkError || EngineError;
 
 fn init_graphics_pipeline(device: c.VkDevice) !void {
     const vert_module = try vk_util.create_shader_mod(device, &vert_spv);
@@ -90,7 +106,7 @@ fn init_surface(
 fn init_queue(dev: c.VkDevice, qf_id: u32) Error!c.VkQueue {
     var queue: c.VkQueue = null;
     c.vkGetDeviceQueue(dev, qf_id, 0, &queue);
-    if (queue == null) return Error.Unhandled;
+    if (queue == null) return Error.QueueInitError;
     return queue;
 }
 
@@ -99,9 +115,7 @@ fn init_device(physdevice: c.VkPhysicalDevice, qf_ids: QueueFamilyIds) Error!c.V
         alloc,
         qf_ids,
         device_extensions[0..],
-    ) catch {
-        return Error.Unhandled;
-    } orelse return Error.Unhandled;
+    ) catch return Error.FeatDeviceCreateInfoInitError;
     defer FeatDeviceCreateInfo.deinit(fdev_create_info, alloc);
 
     var new_dev: c.VkDevice = undefined;
@@ -134,7 +148,7 @@ fn init_window() Error!*c.GLFWwindow {
     _ = c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_FALSE);
 
     const window = c.glfwCreateWindow(500, 500, app, null, null) orelse
-        return Error.Unhandled;
+        return Error.WindowInitError;
 
     return window;
 }
@@ -145,9 +159,9 @@ fn init_vk_instance() Error!c.VkInstance {
             alloc,
             validation_layers.len,
             validation_layers,
-        ) catch return Error.Unhandled;
+        ) catch return Error.CheckValidationLayerSupportError;
 
-        if (!is_sup) return Error.Unhandled;
+        if (!is_sup) return Error.CheckValidationLayerSupportError;
     }
 
     const app_info: c.VkApplicationInfo = .{
@@ -160,7 +174,7 @@ fn init_vk_instance() Error!c.VkInstance {
         alloc,
         extensions.len,
         extensions,
-    ) catch return Error.Unhandled;
+    ) catch return Error.OOMError;
     defer alloc.free(required_extensions);
 
     var create_info: c.VkInstanceCreateInfo = .{
@@ -203,12 +217,12 @@ pub fn init() Error!@This() {
     self.surface = try init_surface(self.vk_instance, self.window);
 
     const physdevices = vk_util.alloc_physdevice_slice(alloc, self.vk_instance) catch {
-        return Error.Unhandled;
+        return Error.AllocPhysDeviceSliceError;
     };
     defer alloc.free(physdevices);
 
     const qf_lists = QueueFamilyIds.alloc_qf_slice(alloc, physdevices, self.surface) catch {
-        return Error.Unhandled;
+        return Error.AllocQFSliceError;
     };
     defer alloc.free(qf_lists);
 
@@ -223,7 +237,7 @@ pub fn init() Error!@This() {
             alloc,
             physdevice,
             device_extensions[0..],
-        ) catch return Error.Unhandled;
+        ) catch return Error.SupportsDevExtensionsError;
 
         if (dev_ext_support) {
             if (swap_chain_support != null) {
@@ -233,7 +247,7 @@ pub fn init() Error!@This() {
                 alloc,
                 physdevice,
                 self.surface,
-            ) catch return Error.Unhandled;
+            ) catch return Error.SwapChainSupportDetailsInitError;
 
             if (qf_ids.complete() and swap_chain_support.?.adequate()) {
                 // now init_device(...) is safe
@@ -242,7 +256,7 @@ pub fn init() Error!@This() {
             }
         }
     }
-    if (self.phys_device == null) return Error.Unhandled;
+    if (self.phys_device == null) return Error.PhysDeviceNullError;
 
     defer if (swap_chain_support) |*s| s.deinit(alloc);
 
@@ -258,10 +272,10 @@ pub fn init() Error!@This() {
         self.surface,
         qf_ids,
         self.device,
-    ) catch return Error.Unhandled;
+    ) catch return Error.SwapChainDataInitError;
 
     init_graphics_pipeline(self.device) catch {
-        return Error.Unhandled;
+        return Error.InitGraphicsPipelineError;
     };
 
     return self;

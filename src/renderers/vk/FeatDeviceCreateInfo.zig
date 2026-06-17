@@ -15,8 +15,8 @@ pub fn init(
     alloc: std.mem.Allocator,
     qf_ids: QueueFamilyIds,
     device_extensions: []const [*c]const u8,
-) !?*@This() {
-    var unique_ids: std.ArrayList(u32) = try qf_ids.alloc_unique_set(alloc) orelse return null;
+) !*@This() {
+    var unique_ids: std.ArrayList(u32) = try qf_ids.alloc_unique_set(alloc);
     defer unique_ids.deinit(alloc); // values are copied, so freeing is ok
 
     var queue_create_infos = std.ArrayList(c.VkDeviceQueueCreateInfo).empty;
