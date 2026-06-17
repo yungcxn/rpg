@@ -8,10 +8,9 @@ const vk_debug = @import("vk/debug.zig");
 const QueueFamilyIds = @import("vk/QueueFamilyIds.zig");
 const FeatDeviceCreateInfo = @import("vk/FeatDeviceCreateInfo.zig");
 const SwapChain = @import("vk/SwapChain.zig");
-const req_vksuc = vk_util.req_vksuc;
+const Pipeline = @import("vk/Pipeline.zig");
 
-const vert_spv align(@alignOf(u32)) = @embedFile("vertex_shader").*;
-const frag_spv align(@alignOf(u32)) = @embedFile("fragment_shader").*;
+const req_vksuc = vk_util.req_vksuc;
 
 const enable_validation_layers: bool = builtin.mode == .Debug;
 const validation_layers = [_][*c]const u8{
@@ -41,7 +40,8 @@ phys_device: c.VkPhysicalDevice = null,
 device: c.VkDevice = null, // gpu device *handle*
 present_q: c.VkQueue = null,
 graphics_q: c.VkQueue = null,
-swap_chain_data: ?SwapChain.Data = null,
+swap_chain_data: SwapChain.Data,
+pipeline: Pipeline,
 
 // These are errors not thrown through Vulkan/GLFW, but through this logic
 const EngineError = error{
@@ -57,42 +57,11 @@ const EngineError = error{
     PhysDeviceNullError,
     SwapChainDataInitError,
     InitGraphicsPipelineError,
+    PipelineInitError,
 };
 
 // this is used by Renderer as a subtrait
 pub const Error = vk_util.ZVkError || EngineError;
-
-fn init_graphics_pipeline(device: c.VkDevice) !void {
-    const vert_module = try vk_util.create_shader_mod(device, &vert_spv);
-    const frag_module = try vk_util.create_shader_mod(device, &frag_spv);
-
-    const shader_stages = [2]c.VkPipelineShaderStageCreateInfo{
-        .{
-            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .pNext = null,
-            .flags = 0,
-            .stage = c.VK_SHADER_STAGE_VERTEX_BIT,
-            .module = vert_module,
-            .pName = "main", // matches `export fn main()` in vertex-zig-file
-            .pSpecializationInfo = null,
-        },
-        .{
-            .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .pNext = null,
-            .flags = 0,
-            .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT,
-            .module = frag_module,
-            .pName = "main", // same for fragment-zig-file
-            .pSpecializationInfo = null,
-        },
-    };
-
-    _ = shader_stages;
-    // TODO NEXT https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions
-
-    defer c.vkDestroyShaderModule(device, vert_module, null);
-    defer c.vkDestroyShaderModule(device, frag_module, null);
-}
 
 fn init_surface(
     vk_instance: c.VkInstance,
@@ -205,37 +174,39 @@ fn init_vk_instance() Error!c.VkInstance {
 }
 
 pub fn init() Error!@This() {
-    var self = @This(){};
+    const window = try init_window();
+    const vk_instance = try init_vk_instance();
 
-    self.window = try init_window();
-    self.vk_instance = try init_vk_instance();
-
+    var debug_messenger: c.VkDebugUtilsMessengerEXT = undefined;
     if (comptime enable_validation_layers) {
-        self.debug_messenger = try init_debug_messenger(self.vk_instance);
+        debug_messenger = try init_debug_messenger(vk_instance);
+    } else {
+        debug_messenger = null;
     }
 
-    self.surface = try init_surface(self.vk_instance, self.window);
+    const surface = try init_surface(vk_instance, window);
 
-    const physdevices = vk_util.alloc_physdevice_slice(alloc, self.vk_instance) catch {
+    const physdevices = vk_util.alloc_physdevice_slice(alloc, vk_instance) catch {
         return Error.AllocPhysDeviceSliceError;
     };
     defer alloc.free(physdevices);
 
-    const qf_lists = QueueFamilyIds.alloc_qf_slice(alloc, physdevices, self.surface) catch {
+    const qf_lists = QueueFamilyIds.alloc_qf_slice(alloc, physdevices, surface) catch {
         return Error.AllocQFSliceError;
     };
     defer alloc.free(qf_lists);
 
+    var phys_device: c.VkPhysicalDevice = null;
     // physical device selection must be based on supporting multiple factors
     // TODO: separate func?
     // these vars need to be found for physdevice
     var swap_chain_support: ?SwapChain.SupportDetails = null;
     var qf_ids: QueueFamilyIds = undefined;
-    for (physdevices, 0..) |physdevice, i| {
+    for (physdevices, 0..) |pd, i| {
         qf_ids = qf_lists[i];
         const dev_ext_support: bool = vk_util.supports_dev_extensions(
             alloc,
-            physdevice,
+            pd,
             device_extensions[0..],
         ) catch return Error.SupportsDevExtensionsError;
 
@@ -245,40 +216,52 @@ pub fn init() Error!@This() {
             }
             swap_chain_support = SwapChain.SupportDetails.init(
                 alloc,
-                physdevice,
-                self.surface,
+                pd,
+                surface,
             ) catch return Error.SwapChainSupportDetailsInitError;
 
             if (qf_ids.complete() and swap_chain_support.?.adequate()) {
                 // now init_device(...) is safe
-                self.phys_device = physdevice;
+                phys_device = pd;
                 break;
             }
         }
     }
-    if (self.phys_device == null) return Error.PhysDeviceNullError;
+    if (phys_device == null) return Error.PhysDeviceNullError;
 
     defer if (swap_chain_support) |*s| s.deinit(alloc);
 
-    self.device = try init_device(self.phys_device, qf_ids);
+    const device = try init_device(phys_device, qf_ids);
+    const present_q = try init_queue(device, qf_ids.present.?);
+    const graphics_q = try init_queue(device, qf_ids.graphics.?);
 
-    self.present_q = try init_queue(self.device, qf_ids.present.?);
-    self.graphics_q = try init_queue(self.device, qf_ids.graphics.?);
-
-    self.swap_chain_data = SwapChain.Data.init(
+    const swap_chain_data = SwapChain.Data.init(
         alloc,
         swap_chain_support.?,
-        self.window,
-        self.surface,
+        window,
+        surface,
         qf_ids,
-        self.device,
+        device,
     ) catch return Error.SwapChainDataInitError;
 
-    init_graphics_pipeline(self.device) catch {
-        return Error.InitGraphicsPipelineError;
-    };
+    const pipeline = Pipeline.init(
+        device,
+        swap_chain_data.extent,
+        swap_chain_data.img_format,
+    ) catch return Error.PipelineInitError;
 
-    return self;
+    return @This(){
+        .window = window,
+        .vk_instance = vk_instance,
+        .debug_messenger = debug_messenger,
+        .surface = surface,
+        .phys_device = phys_device,
+        .device = device,
+        .present_q = present_q,
+        .graphics_q = graphics_q,
+        .swap_chain_data = swap_chain_data,
+        .pipeline = pipeline,
+    };
 }
 
 pub fn deinit(self: *@This()) void {
@@ -290,6 +273,7 @@ pub fn deinit(self: *@This()) void {
         );
     }
 
+    self.pipeline.deinit();
     if (self.swap_chain_data) |*scd| scd.deinit(alloc, self.device);
     c.vkDestroyDevice(self.device, null);
     c.vkDestroySurfaceKHR(self.vk_instance, self.surface, null);

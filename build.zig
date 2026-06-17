@@ -39,6 +39,6 @@ pub fn build(b: *std.Build) void {
         .name = name,
         .root_module = exe.root_module,
     });
-    const check = b.step("check", "Check if ++ \"" ++ name ++ "\" compiles");
+    const check = b.step("check", "Compile-check the application");
     check.dependOn(&exe_check.step);
 }
