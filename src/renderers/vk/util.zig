@@ -9,6 +9,8 @@ const Command = @import("Command.zig");
 const Pipeline = @import("Pipeline.zig");
 const Queue = @import("Queue.zig");
 
+const max_flightframes = Command.max_flightframes;
+
 pub const ZVkResult = enum(c_int) {
     Success = c.VK_SUCCESS,
     NotReady = c.VK_NOT_READY,
@@ -147,15 +149,17 @@ pub fn draw_frame(
     command: Command,
     pipeline: Pipeline,
     queue: Queue,
+    frame_counter: *u32,
 ) ZVkError!void {
-    try sync.drawfence();
+    const frame_idx: u32 = frame_counter.*;
+    try sync.drawfence(frame_idx); // syncs CPU and GPU
 
     var img_idx: u32 = 0;
     try req_vksuc(c.vkAcquireNextImageKHR(
         sync.device,
         swap_chain_data.swap_chain,
         std.math.maxInt(u64),
-        sync.present_complete_sem,
+        sync.present_complete_sems[frame_idx],
         null,
         &img_idx,
     ));
@@ -164,6 +168,7 @@ pub fn draw_frame(
     const img_view = swap_chain_data.img_views[img_idx];
 
     try command.record_command_buffer(
+        frame_idx,
         img,
         img_view,
         swap_chain_data.extent,
@@ -174,24 +179,26 @@ pub fn draw_frame(
     const submit_info = c.VkSubmitInfo{
         .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &sync.present_complete_sem,
+        .pWaitSemaphores = &sync.present_complete_sems[frame_idx],
         .pWaitDstStageMask = &wait_mask,
         .commandBufferCount = 1,
-        .pCommandBuffers = &command.cmd_buf,
+        .pCommandBuffers = &command.cmd_bufs[frame_idx],
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &sync.render_finished_sem,
+        .pSignalSemaphores = &sync.render_finished_sems[img_idx],
     };
     try req_vksuc(
-        c.vkQueueSubmit(queue.graphics, 1, &submit_info, sync.fence_d),
+        c.vkQueueSubmit(queue.graphics, 1, &submit_info, sync.fences_d[frame_idx]),
     );
 
     const present_info = c.VkPresentInfoKHR{
         .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &sync.render_finished_sem,
+        .pWaitSemaphores = &sync.render_finished_sems[img_idx],
         .swapchainCount = 1,
         .pSwapchains = &swap_chain_data.swap_chain,
         .pImageIndices = &img_idx,
     };
     try req_vksuc(c.vkQueuePresentKHR(queue.present, &present_info));
+
+    frame_counter.* = (frame_idx + 1) % max_flightframes;
 }

@@ -45,7 +45,11 @@ pub fn init() Error!@This() {
     );
 
     const command = try Command.init(base.device, base.qf_ids);
-    const sync = try Sync.init(base.device);
+    const sync = try Sync.init(
+        alloc,
+        base.device,
+        @intCast(swap_chain_data.imgs.len),
+    );
 
     return @This(){
         .base = base,
@@ -73,12 +77,15 @@ pub fn deinit(self: *@This()) void {
 pub fn render(self: *@This()) bool {
     if (c.glfwWindowShouldClose(self.base.window) == 0) {
         c.glfwPollEvents();
+        var frame_counter: u32 = 0;
+
         vk_util.draw_frame(
             self.sync,
             self.swap_chain_data,
             self.command,
             self.pipeline,
             self.queue,
+            &frame_counter,
         ) catch return false;
     }
     return true;

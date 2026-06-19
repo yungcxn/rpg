@@ -247,12 +247,10 @@ pub const Data = struct {
         alloc: std.mem.Allocator,
     ) void {
         c.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
-        for (self.img_views) |img_views| {
-            for (img_views) |iv| {
-                c.vkDestroyImageView(self.device, iv, null);
-            }
-            alloc.free(img_views);
+        for (self.img_views) |iv| {
+            c.vkDestroyImageView(self.device, iv, null);
         }
+        alloc.free(self.img_views);
         alloc.free(self.imgs);
     }
 };

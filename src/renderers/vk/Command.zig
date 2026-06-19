@@ -5,8 +5,10 @@ const req_vksuc = util.req_vksuc;
 const ZVkError = util.ZVkError;
 const QueueFamilyIds = @import("QueueFamilyIds.zig");
 
+pub const max_flightframes = 2;
+
 cmd_pool: c.VkCommandPool,
-cmd_buf: c.VkCommandBuffer,
+cmd_bufs: [max_flightframes]c.VkCommandBuffer,
 device: c.VkDevice,
 
 pub fn init(
@@ -26,14 +28,14 @@ pub fn init(
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = cmd_pool,
         .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
+        .commandBufferCount = max_flightframes,
     };
 
-    var cmd_buf: c.VkCommandBuffer = undefined;
-    try req_vksuc(c.vkAllocateCommandBuffers(device, &alloc_info, &cmd_buf));
+    var cmd_bufs: [max_flightframes]c.VkCommandBuffer = undefined;
+    try req_vksuc(c.vkAllocateCommandBuffers(device, &alloc_info, &cmd_bufs));
     return @This(){
         .cmd_pool = cmd_pool,
-        .cmd_buf = cmd_buf,
+        .cmd_bufs = cmd_bufs,
         .device = device,
     };
 }
@@ -45,18 +47,21 @@ pub fn deinit(self: @This()) void {
 
 pub fn record_command_buffer(
     self: @This(),
+    frame_idx: u32,
     img: c.VkImage,
     img_view: c.VkImageView,
     extent: c.VkExtent2D,
     pipeline: c.VkPipeline,
 ) ZVkError!void {
+    const cmd_buf = self.cmd_bufs[frame_idx];
+
     const begin_info = c.VkCommandBufferBeginInfo{
         .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     };
-    try req_vksuc(c.vkBeginCommandBuffer(self.cmd_buf, &begin_info));
+    try req_vksuc(c.vkBeginCommandBuffer(cmd_buf, &begin_info));
 
     transition_image_layout(
-        self.cmd_buf,
+        cmd_buf,
         img,
         c.VK_IMAGE_LAYOUT_UNDEFINED,
         c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -90,8 +95,8 @@ pub fn record_command_buffer(
         .pColorAttachments = &attachment_info,
     };
 
-    c.vkCmdBeginRendering(self.cmd_buf, &render_info);
-    c.vkCmdBindPipeline(self.cmd_buf, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    c.vkCmdBeginRendering(cmd_buf, &render_info);
+    c.vkCmdBindPipeline(cmd_buf, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
     const dyn_viewport = c.VkViewport{
         .x = 0.0,
@@ -101,20 +106,20 @@ pub fn record_command_buffer(
         .minDepth = 0.0,
         .maxDepth = 1.0,
     };
-    c.vkCmdSetViewport(self.cmd_buf, 0, 1, &dyn_viewport);
+    c.vkCmdSetViewport(cmd_buf, 0, 1, &dyn_viewport);
 
     const dyn_scissor = c.VkRect2D{
         .offset = c.VkOffset2D{ .x = 0, .y = 0 },
         .extent = extent,
     };
-    c.vkCmdSetScissor(self.cmd_buf, 0, 1, &dyn_scissor);
+    c.vkCmdSetScissor(cmd_buf, 0, 1, &dyn_scissor);
 
-    c.vkCmdDraw(self.cmd_buf, 3, 1, 0, 0);
+    c.vkCmdDraw(cmd_buf, 3, 1, 0, 0);
 
-    c.vkCmdEndRendering(self.cmd_buf);
+    c.vkCmdEndRendering(cmd_buf);
 
     transition_image_layout(
-        self.cmd_buf,
+        cmd_buf,
         img,
         c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
@@ -124,7 +129,7 @@ pub fn record_command_buffer(
         c.VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
     );
 
-    try req_vksuc(c.vkEndCommandBuffer(self.cmd_buf));
+    try req_vksuc(c.vkEndCommandBuffer(cmd_buf));
 }
 
 fn transition_image_layout(
