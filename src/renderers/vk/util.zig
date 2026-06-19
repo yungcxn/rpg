@@ -2,89 +2,12 @@ const c = @import("c_vk_glfw");
 const std = @import("std");
 const builtin = @import("builtin");
 const hack = @import("../../util/hack.zig");
-
-pub fn create_shader_mod(
-    device: c.VkDevice,
-    spv: []const u8,
-) !c.VkShaderModule {
-    const create_info = c.VkShaderModuleCreateInfo{
-        .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .pNext = null,
-        .flags = 0,
-        .codeSize = spv.len,
-        .pCode = @ptrCast(@alignCast(spv.ptr)),
-    };
-
-    var shader_module: c.VkShaderModule = undefined;
-    try req_vksuc(
-        c.vkCreateShaderModule(device, &create_info, null, &shader_module),
-    );
-    return shader_module;
-}
-
-pub fn supports_dev_extensions(
-    alloc: std.mem.Allocator,
-    physdevice: c.VkPhysicalDevice,
-    dev_extensions: []const [*c]const u8,
-) !bool {
-    var extc: u32 = 0;
-    try req_vksuc(c.vkEnumerateDeviceExtensionProperties(physdevice, null, &extc, null));
-
-    const supported_exts = try alloc.alloc(c.VkExtensionProperties, extc);
-    defer alloc.free(supported_exts);
-
-    try req_vksuc(
-        c.vkEnumerateDeviceExtensionProperties(physdevice, null, &extc, supported_exts.ptr),
-    );
-
-    for (dev_extensions) |d| {
-        var is_supported = false;
-        for (supported_exts) |s| {
-            if (std.mem.eql(
-                u8,
-                std.mem.sliceTo(&s.extensionName, 0),
-                std.mem.sliceTo(d, 0),
-            )) {
-                is_supported = true;
-                break;
-            }
-        }
-        if (!is_supported) return false;
-    }
-    return true;
-}
-
-pub fn alloc_physdevice_slice(
-    alloc: std.mem.Allocator,
-    instance: c.VkInstance,
-) ![]c.VkPhysicalDevice {
-    var devc: u32 = 0;
-    try req_vksuc(c.vkEnumeratePhysicalDevices(instance, &devc, null));
-    const physdevices = try alloc.alloc(c.VkPhysicalDevice, devc);
-    try req_vksuc(
-        c.vkEnumeratePhysicalDevices(instance, &devc, physdevices.ptr),
-    );
-    return physdevices;
-}
-
-pub fn alloc_req_extensions(
-    alloc: std.mem.Allocator,
-    comptime N: usize,
-    added_exts: [N][*c]const u8,
-) ![][*c]const u8 {
-    var count: u32 = 0;
-    const glfw_exts = c.glfwGetRequiredInstanceExtensions(&count)[0..count];
-
-    const extensions: [][*c]const u8 = try alloc.alloc(
-        [*c]const u8,
-        glfw_exts.len + added_exts.len,
-    );
-
-    @memcpy(extensions[0..glfw_exts.len], glfw_exts);
-    @memcpy(extensions[glfw_exts.len..], &added_exts);
-
-    return extensions;
-}
+const QueueFamilyIds = @import("QueueFamilyIds.zig");
+const SwapChain = @import("SwapChain.zig");
+const Sync = @import("Sync.zig");
+const Command = @import("Command.zig");
+const Pipeline = @import("Pipeline.zig");
+const Queue = @import("Queue.zig");
 
 pub const ZVkResult = enum(c_int) {
     Success = c.VK_SUCCESS,
@@ -216,4 +139,59 @@ pub fn req_vksuc(res: c.VkResult) ZVkError!void {
             .{zvkres},
         );
     }
+}
+
+pub fn draw_frame(
+    sync: Sync,
+    swap_chain_data: SwapChain.Data,
+    command: Command,
+    pipeline: Pipeline,
+    queue: Queue,
+) ZVkError!void {
+    try sync.drawfence();
+
+    var img_idx: u32 = 0;
+    try req_vksuc(c.vkAcquireNextImageKHR(
+        sync.device,
+        swap_chain_data.swap_chain,
+        std.math.maxInt(u64),
+        sync.present_complete_sem,
+        null,
+        &img_idx,
+    ));
+
+    const img = swap_chain_data.imgs[img_idx];
+    const img_view = swap_chain_data.img_views[img_idx];
+
+    try command.record_command_buffer(
+        img,
+        img_view,
+        swap_chain_data.extent,
+        pipeline.pipeline,
+    );
+
+    const wait_mask: c.VkPipelineStageFlags = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const submit_info = c.VkSubmitInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &sync.present_complete_sem,
+        .pWaitDstStageMask = &wait_mask,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command.cmd_buf,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &sync.render_finished_sem,
+    };
+    try req_vksuc(
+        c.vkQueueSubmit(queue.graphics, 1, &submit_info, sync.fence_d),
+    );
+
+    const present_info = c.VkPresentInfoKHR{
+        .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &sync.render_finished_sem,
+        .swapchainCount = 1,
+        .pSwapchains = &swap_chain_data.swap_chain,
+        .pImageIndices = &img_idx,
+    };
+    try req_vksuc(c.vkQueuePresentKHR(queue.present, &present_info));
 }

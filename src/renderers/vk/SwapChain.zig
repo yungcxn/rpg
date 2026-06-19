@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c_vk_glfw");
 const util = @import("util.zig");
 const req_vksuc = util.req_vksuc;
+const ZVkError = util.ZVkError;
 const QueueFamilyIds = @import("QueueFamilyIds.zig");
 
 pub const SupportDetails = struct {
@@ -13,7 +14,7 @@ pub const SupportDetails = struct {
         alloc: std.mem.Allocator,
         physdevice: c.VkPhysicalDevice,
         surface: c.VkSurfaceKHR,
-    ) !@This() {
+    ) ZVkError!@This() {
         var details = @This(){
             .capabilities = undefined,
         };
@@ -37,7 +38,8 @@ pub const SupportDetails = struct {
         );
 
         if (formatc != 0) {
-            details.formats = try alloc.alloc(c.VkSurfaceFormatKHR, formatc);
+            details.formats = alloc.alloc(c.VkSurfaceFormatKHR, formatc) catch
+                return ZVkError.ErrorOutOfHostMemory;
             errdefer alloc.free(details.formats.?);
 
             try req_vksuc(
@@ -61,7 +63,10 @@ pub const SupportDetails = struct {
         );
 
         if (present_modec != 0) {
-            details.present_modes = try alloc.alloc(c.VkPresentModeKHR, present_modec);
+            details.present_modes = alloc.alloc(
+                c.VkPresentModeKHR,
+                present_modec,
+            ) catch return ZVkError.ErrorOutOfHostMemory;
             errdefer alloc.free(details.present_modes.?);
             try req_vksuc(
                 c.vkGetPhysicalDeviceSurfacePresentModesKHR(
@@ -94,19 +99,21 @@ pub const SupportDetails = struct {
 };
 
 pub const Data = struct {
-    swap_chain: c.VkSwapchainKHR = null,
-    imgs: ?[]c.VkImage = null,
+    swap_chain: c.VkSwapchainKHR,
+    imgs: []c.VkImage,
     img_format: c.VkFormat = 0,
     extent: c.VkExtent2D = .{ .width = 0, .height = 0 },
-    img_views: ?[]c.VkImageView = null,
+    img_views: []c.VkImageView,
+    device: c.VkDevice,
 
     fn init_image_views(
         alloc: std.mem.Allocator,
         imgs: []c.VkImage,
         img_format: c.VkFormat,
         device: c.VkDevice,
-    ) ![]c.VkImageView {
-        var img_views = try alloc.alloc(c.VkImageView, imgs.len);
+    ) ZVkError![]c.VkImageView {
+        var img_views = alloc.alloc(c.VkImageView, imgs.len) catch
+            return ZVkError.ErrorOutOfHostMemory;
 
         for (imgs, 0..) |img, i| {
             const img_v_ci = c.VkImageViewCreateInfo{
@@ -151,9 +158,7 @@ pub const Data = struct {
         surface: c.VkSurfaceKHR,
         qf_ids: QueueFamilyIds,
         device: c.VkDevice,
-    ) !@This() {
-        var self = @This(){};
-
+    ) ZVkError!@This() {
         const surface_format: c.VkSurfaceFormatKHR = choose_swap_surface_format(
             support_details.formats.?,
         );
@@ -161,8 +166,8 @@ pub const Data = struct {
             support_details.present_modes.?,
         );
 
-        self.img_format = surface_format.format;
-        self.extent = choose_swap_extent(
+        const img_format = surface_format.format;
+        const extent = choose_swap_extent(
             support_details.capabilities,
             window,
         );
@@ -180,7 +185,7 @@ pub const Data = struct {
             .minImageCount = imgc,
             .imageFormat = surface_format.format,
             .imageColorSpace = surface_format.colorSpace,
-            .imageExtent = self.extent,
+            .imageExtent = extent,
             .imageArrayLayers = 1,
             .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         };
@@ -205,51 +210,50 @@ pub const Data = struct {
         swap_chain_ci.oldSwapchain = null;
 
         var swap_chain: c.VkSwapchainKHR = undefined;
-        try req_vksuc(c.vkCreateSwapchainKHR(device, &swap_chain_ci, null, &swap_chain));
-
-        self.swap_chain = swap_chain;
-
-        try req_vksuc(c.vkGetSwapchainImagesKHR(device, swap_chain, &imgc, null));
-
-        // free'd in global deinit of this
-        self.imgs = try alloc.alloc(c.VkImage, imgc);
-        errdefer alloc.free(self.imgs.?);
         try req_vksuc(
-            c.vkGetSwapchainImagesKHR(device, swap_chain, &imgc, self.imgs.?.ptr),
+            c.vkCreateSwapchainKHR(device, &swap_chain_ci, null, &swap_chain),
         );
 
-        self.img_views = try init_image_views(
+        try req_vksuc(
+            c.vkGetSwapchainImagesKHR(device, swap_chain, &imgc, null),
+        );
+
+        // free'd in global deinit of this
+        const imgs = alloc.alloc(c.VkImage, imgc) catch return ZVkError.ErrorOutOfHostMemory;
+        errdefer alloc.free(imgs);
+        try req_vksuc(
+            c.vkGetSwapchainImagesKHR(device, swap_chain, &imgc, imgs.ptr),
+        );
+
+        const img_views = try init_image_views(
             alloc,
-            self.imgs.?,
-            self.img_format,
+            imgs,
+            img_format,
             device,
         );
 
-        return self;
+        return @This(){
+            .swap_chain = swap_chain,
+            .imgs = imgs,
+            .img_format = img_format,
+            .extent = extent,
+            .img_views = img_views,
+            .device = device,
+        };
     }
 
     pub fn deinit(
         self: *@This(),
         alloc: std.mem.Allocator,
-        device: c.VkDevice,
     ) void {
-        if (self.swap_chain != null) {
-            c.vkDestroySwapchainKHR(device, self.swap_chain, null);
-            self.swap_chain = null;
-        }
-
-        if (self.img_views) |img_views| {
+        c.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
+        for (self.img_views) |img_views| {
             for (img_views) |iv| {
-                c.vkDestroyImageView(device, iv, null);
+                c.vkDestroyImageView(self.device, iv, null);
             }
             alloc.free(img_views);
-            self.img_views = null;
         }
-
-        if (self.imgs) |imgs| {
-            alloc.free(imgs);
-            self.imgs = null;
-        }
+        alloc.free(self.imgs);
     }
 };
 

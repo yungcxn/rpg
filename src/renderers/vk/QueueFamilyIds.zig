@@ -1,11 +1,16 @@
 const std = @import("std");
 const c = @import("c_vk_glfw");
+const util = @import("util.zig");
+const ZVkError = util.ZVkError;
 
 graphics: ?u32 = null,
 present: ?u32 = null,
 
-pub fn alloc_unique_set(self: @This(), alloc: std.mem.Allocator) !std.ArrayList(u32) {
-    if (!self.complete()) return error.InvalidState;
+pub fn alloc_unique_set(
+    self: @This(),
+    alloc: std.mem.Allocator,
+) ZVkError!std.ArrayList(u32) {
+    if (!self.complete()) return ZVkError.ErrorInitializationFailed;
 
     var set = std.ArrayList(u32).empty;
 
@@ -18,7 +23,8 @@ pub fn alloc_unique_set(self: @This(), alloc: std.mem.Allocator) !std.ArrayList(
                 break;
             }
         }
-        if (should_add) try set.append(alloc, qf_id);
+        if (should_add) set.append(alloc, qf_id) catch
+            return ZVkError.ErrorOutOfHostMemory;
     }
     return set;
 }
@@ -27,11 +33,14 @@ fn find_ids(
     alloc: std.mem.Allocator,
     physdevice: c.VkPhysicalDevice,
     surface: c.VkSurfaceKHR,
-) !@This() {
+) ZVkError!@This() {
     var queue_familyc: u32 = 0;
     _ = c.vkGetPhysicalDeviceQueueFamilyProperties(physdevice, &queue_familyc, null);
 
-    const queue_families = try alloc.alloc(c.VkQueueFamilyProperties, queue_familyc);
+    const queue_families = alloc.alloc(
+        c.VkQueueFamilyProperties,
+        queue_familyc,
+    ) catch return ZVkError.ErrorOutOfHostMemory;
     defer alloc.free(queue_families);
 
     _ = c.vkGetPhysicalDeviceQueueFamilyProperties(
@@ -65,8 +74,8 @@ pub fn alloc_qf_slice(
     alloc: std.mem.Allocator,
     physdevices: []c.VkPhysicalDevice,
     surface: c.VkSurfaceKHR,
-) ![]@This() {
-    var qf_lists = try alloc.alloc(@This(), physdevices.len);
+) ZVkError![]@This() {
+    var qf_lists = alloc.alloc(@This(), physdevices.len) catch return ZVkError.ErrorOutOfHostMemory;
     for (physdevices, 0..) |physdevice, i| {
         qf_lists[i] = try find_ids(alloc, physdevice, surface);
     }

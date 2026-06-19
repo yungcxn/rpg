@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("c_vk_glfw");
 const util = @import("util.zig");
 const req_vksuc = util.req_vksuc;
+const ZVkError = util.ZVkError;
 
 const vert_spv align(@alignOf(u32)) = @embedFile("vertex_shader").*;
 const frag_spv align(@alignOf(u32)) = @embedFile("fragment_shader").*;
@@ -13,10 +14,10 @@ pub fn init(
     device: c.VkDevice,
     sc_extent: c.VkExtent2D,
     img_format: c.VkFormat,
-) !@This() {
-    const vert_module = try util.create_shader_mod(device, &vert_spv);
+) ZVkError!@This() {
+    const vert_module = try create_shader_mod(device, &vert_spv);
     defer c.vkDestroyShaderModule(device, vert_module, null);
-    const frag_module = try util.create_shader_mod(device, &frag_spv);
+    const frag_module = try create_shader_mod(device, &frag_spv);
     defer c.vkDestroyShaderModule(device, frag_module, null);
 
     const shader_stages = [2]c.VkPipelineShaderStageCreateInfo{
@@ -170,4 +171,23 @@ pub fn init(
 pub fn deinit(self: @This(), device: c.VkDevice) void {
     c.vkDestroyPipeline(device, self.pipeline, null);
     c.vkDestroyPipelineLayout(device, self.pipeline_layout, null);
+}
+
+fn create_shader_mod(
+    device: c.VkDevice,
+    spv: []const u8,
+) ZVkError!c.VkShaderModule {
+    const create_info = c.VkShaderModuleCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .codeSize = spv.len,
+        .pCode = @ptrCast(@alignCast(spv.ptr)),
+    };
+
+    var shader_module: c.VkShaderModule = undefined;
+    try req_vksuc(
+        c.vkCreateShaderModule(device, &create_info, null, &shader_module),
+    );
+    return shader_module;
 }
