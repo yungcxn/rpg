@@ -27,6 +27,7 @@ const device_extensions = hack.conditioned_build_arr(
 );
 
 window: ?*c.GLFWwindow,
+framebuffer_resized: bool = false,
 vk_instance: c.VkInstance,
 debug_messenger: c.VkDebugUtilsMessengerEXT = null, // only for debug
 surface: c.VkSurfaceKHR,
@@ -39,45 +40,37 @@ pub fn init(
     alloc: std.mem.Allocator,
     appname: []const u8,
 ) ZVkError!@This() {
-    const window = try init_window(appname);
-    const vk_instance = try init_vk_instance(alloc, appname);
+    var self: @This() = undefined;
+    self.window = try init_window(appname, &self);
+    self.vk_instance = try init_vk_instance(alloc, appname);
 
     var debug_messenger: c.VkDebugUtilsMessengerEXT = undefined;
     if (comptime enable_validation_layers) {
-        debug_messenger = try debug.init_debug_messenger(vk_instance);
+        debug_messenger = try debug.init_debug_messenger(self.vk_instance);
     } else {
         debug_messenger = null;
     }
 
-    const surface = try init_surface(vk_instance, window);
-    const physdevices = try alloc_physdevice_slice(alloc, vk_instance);
+    self.surface = try init_surface(self.vk_instance, self.window);
+    const physdevices = try alloc_physdevice_slice(alloc, self.vk_instance);
     defer alloc.free(physdevices);
 
-    const qf_lists = try QueueFamilyIds.alloc_qf_slice(alloc, physdevices, surface);
+    const qf_lists = try QueueFamilyIds.alloc_qf_slice(alloc, physdevices, self.surface);
     defer alloc.free(qf_lists);
 
-    const phys_device, const sc_sup, const qf_ids = try pick_phys_device_and_props(
+    self.phys_device, self.sc_sup, self.qf_ids = try pick_phys_device_and_props(
         alloc,
         physdevices,
         qf_lists,
-        surface,
+        self.surface,
     );
 
-    const device = try init_device(alloc, phys_device, qf_ids);
+    self.device = try init_device(alloc, self.phys_device, self.qf_ids);
 
-    return @This(){
-        .window = window,
-        .vk_instance = vk_instance,
-        .debug_messenger = debug_messenger,
-        .surface = surface,
-        .phys_device = phys_device,
-        .sc_sup = sc_sup,
-        .qf_ids = qf_ids,
-        .device = device,
-    };
+    return self;
 }
 
-pub fn deinit(self: @This(), alloc: std.mem.Allocator) void {
+pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
     if (comptime enable_validation_layers) {
         debug.deinit_debug_utils_messenger_ext(
             self.vk_instance,
@@ -189,15 +182,29 @@ fn init_device(alloc: std.mem.Allocator, physdevice: c.VkPhysicalDevice, qf_ids:
     return new_dev;
 }
 
-fn init_window(appname: []const u8) ZVkError!*c.GLFWwindow {
+fn init_window(appname: []const u8, thisref: ?*anyopaque) ZVkError!*c.GLFWwindow {
     _ = c.glfwInit();
     _ = c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
-    _ = c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_FALSE);
+    _ = c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
 
     const window = c.glfwCreateWindow(500, 500, appname.ptr, null, null) orelse
         return ZVkError.ErrorInitializationFailed;
 
+    c.glfwSetWindowUserPointer(window, thisref);
+    _ = c.glfwSetFramebufferSizeCallback(window, framebuffer_resize_callback);
+
     return window;
+}
+
+fn framebuffer_resize_callback(
+    window: ?*c.GLFWwindow,
+    width: c_int,
+    height: c_int,
+) callconv(.c) void {
+    _ = width;
+    _ = height;
+    const thisref: *@This() = @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window)));
+    thisref.framebuffer_resized = true;
 }
 
 fn init_vk_instance(

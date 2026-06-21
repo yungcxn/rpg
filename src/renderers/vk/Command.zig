@@ -5,7 +5,7 @@ const req_vksuc = util.req_vksuc;
 const ZVkError = util.ZVkError;
 const QueueFamilyIds = @import("QueueFamilyIds.zig");
 
-pub const max_flightframes = 2;
+pub const max_flightframes = 1;
 
 cmd_pool: c.VkCommandPool,
 cmd_bufs: [max_flightframes]c.VkCommandBuffer,

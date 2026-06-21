@@ -105,6 +105,12 @@ pub const Data = struct {
     extent: c.VkExtent2D = .{ .width = 0, .height = 0 },
     img_views: []c.VkImageView,
     device: c.VkDevice,
+    // these are for reinit needed
+    support_details: SupportDetails,
+    window: ?*c.GLFWwindow = null,
+    surface: c.VkSurfaceKHR,
+    qf_ids: QueueFamilyIds,
+    phys_device: c.VkPhysicalDevice,
 
     fn init_image_views(
         alloc: std.mem.Allocator,
@@ -158,6 +164,7 @@ pub const Data = struct {
         surface: c.VkSurfaceKHR,
         qf_ids: QueueFamilyIds,
         device: c.VkDevice,
+        physdevice: c.VkPhysicalDevice,
     ) ZVkError!@This() {
         const surface_format: c.VkSurfaceFormatKHR = choose_swap_surface_format(
             support_details.formats.?,
@@ -239,17 +246,57 @@ pub const Data = struct {
             .extent = extent,
             .img_views = img_views,
             .device = device,
+            .support_details = support_details,
+            .window = window,
+            .surface = surface,
+            .qf_ids = qf_ids,
+            .phys_device = physdevice,
         };
+    }
+
+    pub fn reinit(
+        self: *@This(),
+        alloc: std.mem.Allocator,
+        window: ?*c.GLFWwindow,
+    ) ZVkError!void {
+        var wh = @Vector(2, c_int){ 0, 0 };
+        c.glfwGetFramebufferSize(window, &wh[0], &wh[1]);
+        while (wh[0] == 0 or wh[1] == 0) {
+            c.glfwGetFramebufferSize(window, &wh[0], &wh[1]);
+            c.glfwWaitEvents();
+        }
+
+        try req_vksuc(c.vkDeviceWaitIdle(self.device));
+
+        self.deinit(alloc);
+        self.support_details.deinit(alloc);
+
+        self.support_details = try SupportDetails.init(
+            alloc,
+            self.phys_device,
+            self.surface,
+        );
+
+        self.* = try @This().init(
+            alloc,
+            self.support_details,
+            self.window,
+            self.surface,
+            self.qf_ids,
+            self.device,
+            self.phys_device,
+        );
     }
 
     pub fn deinit(
         self: *@This(),
         alloc: std.mem.Allocator,
     ) void {
-        c.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
         for (self.img_views) |iv| {
             c.vkDestroyImageView(self.device, iv, null);
         }
+        c.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
+        self.swap_chain = null;
         alloc.free(self.img_views);
         alloc.free(self.imgs);
     }

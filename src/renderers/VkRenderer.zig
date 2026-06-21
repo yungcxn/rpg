@@ -1,5 +1,6 @@
 const c = @import("c_vk_glfw");
 const std = @import("std");
+const Renderer = @import("../Renderer.zig");
 const alloc = std.heap.page_allocator; // TODO: better allocator
 const builtin = @import("builtin");
 const hack = @import("../util/hack.zig");
@@ -36,6 +37,7 @@ pub fn init() Error!@This() {
         base.surface,
         base.qf_ids,
         base.device,
+        base.phys_device,
     );
 
     const pipeline = try Pipeline.init(
@@ -61,11 +63,11 @@ pub fn init() Error!@This() {
     };
 }
 
-pub fn deinit(self: *@This()) void {
+pub fn deinit(self: *@This()) Error!void {
     // before deinit ANYTHING, sync with gpu
-    c.vkDeviceWaitIdle(self.base.device);
+    try req_vksuc(c.vkDeviceWaitIdle(self.base.device));
 
-    self.sync.deinit();
+    self.sync.deinit(alloc);
     self.command.deinit();
     self.pipeline.deinit();
     self.swap_chain_data.deinit(alloc);
@@ -74,19 +76,23 @@ pub fn deinit(self: *@This()) void {
 
 // must catch all errors, since this is a "subtrait" of Renderer.render
 // and error union return is expensive for every loop it.
-pub fn render(self: *@This()) bool {
+pub fn render(self: *@This()) Renderer.RenderReturn {
+    c.glfwPollEvents();
     if (c.glfwWindowShouldClose(self.base.window) == 0) {
-        c.glfwPollEvents();
         var frame_counter: u32 = 0;
-
         vk_util.draw_frame(
+            alloc,
+            self.base.window,
             self.sync,
-            self.swap_chain_data,
+            &self.swap_chain_data,
             self.command,
             self.pipeline,
             self.queue,
             &frame_counter,
-        ) catch return false;
+            &self.base.framebuffer_resized,
+        ) catch return error.GenericError;
+    } else {
+        return .ShouldClose;
     }
-    return true;
+    return .Success;
 }

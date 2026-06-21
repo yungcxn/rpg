@@ -12,7 +12,7 @@ fences_d: [max_flightframes]c.VkFence,
 device: c.VkDevice, // not needed inherently, but for helpers
 swap_chain_imgc: u32,
 
-pub fn drawfence(self: @This(), frame_idx: u32) ZVkError!void {
+pub fn draw_fence_wait(self: @This(), frame_idx: u32) ZVkError!void {
     try req_vksuc(
         c.vkWaitForFences(
             self.device,
@@ -22,6 +22,9 @@ pub fn drawfence(self: @This(), frame_idx: u32) ZVkError!void {
             std.math.maxInt(u64), // inf timeout
         ),
     );
+}
+
+pub fn draw_fence_reset(self: @This(), frame_idx: u32) ZVkError!void {
     try req_vksuc(c.vkResetFences(self.device, 1, &self.fences_d[frame_idx]));
 }
 
@@ -74,7 +77,7 @@ pub fn deinit(self: @This(), alloc: std.mem.Allocator) void {
     alloc.free(self.render_finished_sems);
 
     for (0..max_flightframes) |i| {
-        c.vkDestroyFence(self.device, self.fence_d[i], null);
-        c.vkDestroySemaphore(self.device, self.present_complete_sem[i], null);
+        c.vkDestroyFence(self.device, self.fences_d[i], null);
+        c.vkDestroySemaphore(self.device, self.present_complete_sems[i], null);
     }
 }

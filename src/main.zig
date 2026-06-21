@@ -9,14 +9,20 @@ fn crash(err: anyerror) noreturn {
     return std.process.exit(1);
 }
 
-pub fn main(init: std.process.Init) void {
+pub fn main(init: std.process.Init) !void {
     env.init(init.environ_map);
     io.init(init.io);
 
     var renderer = Renderer.init() catch |err| crash(err);
-    defer renderer.deinit();
 
     while (true) {
-        _ = renderer.render();
+        if (renderer.render()) |ok| switch (ok) {
+            .Success => {},
+            .ShouldClose => break,
+        } else |err| switch (err) {
+            error.GenericError => |genericerr| crash(genericerr),
+        }
     }
+
+    try renderer.deinit();
 }

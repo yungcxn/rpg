@@ -9,6 +9,7 @@ const frag_spv align(@alignOf(u32)) = @embedFile("fragment_shader").*;
 
 pipeline_layout: c.VkPipelineLayout,
 pipeline: c.VkPipeline,
+device: c.VkDevice,
 
 pub fn init(
     device: c.VkDevice,
@@ -165,12 +166,13 @@ pub fn init(
     return @This(){
         .pipeline_layout = pipeline_layout,
         .pipeline = graphics_pipeline,
+        .device = device,
     };
 }
 
-pub fn deinit(self: @This(), device: c.VkDevice) void {
-    c.vkDestroyPipeline(device, self.pipeline, null);
-    c.vkDestroyPipelineLayout(device, self.pipeline_layout, null);
+pub fn deinit(self: @This()) void {
+    c.vkDestroyPipeline(self.device, self.pipeline, null);
+    c.vkDestroyPipelineLayout(self.device, self.pipeline_layout, null);
 }
 
 fn create_shader_mod(

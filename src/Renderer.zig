@@ -10,6 +10,13 @@ const BackendErrorT: type = VKRenderer.Error;
 
 backend: BackendT,
 
+pub const RenderReturn = error{
+    GenericError,
+}!enum {
+    Success,
+    ShouldClose,
+};
+
 // funcs is an array or tuple of .{ string, fn }
 fn validate_backend(comptime funcs: anytype) void {
     inline for (funcs) |func| {
@@ -24,18 +31,18 @@ pub fn init() !@This() {
     comptime {
         validate_backend(.{
             .{ "init", fn () BackendErrorT!BackendT },
-            .{ "render", fn (*BackendT) bool },
-            .{ "deinit", fn (*BackendT) void },
+            .{ "render", fn (*BackendT) RenderReturn },
+            .{ "deinit", fn (*BackendT) BackendErrorT!void },
         });
     }
 
     return @This(){ .backend = try BackendT.init() };
 }
 
-pub fn deinit(self: *@This()) void {
-    self.backend.deinit();
+pub fn deinit(self: *@This()) BackendErrorT!void {
+    try self.backend.deinit();
 }
 
-pub fn render(self: *@This()) bool {
+pub fn render(self: *@This()) RenderReturn {
     return self.backend.render();
 }

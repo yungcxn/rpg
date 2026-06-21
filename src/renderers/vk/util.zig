@@ -143,26 +143,51 @@ pub fn req_vksuc(res: c.VkResult) ZVkError!void {
     }
 }
 
+pub fn zreq_vksuc(res: ZVkError!ZVkResult) ZVkError!void {
+    if (res != ZVkResult.Success) {
+        std.log.warn(
+            "Vulkan returned non-success result: {} - proceeding",
+            .{res},
+        );
+    }
+}
+
 pub fn draw_frame(
+    alloc: std.mem.Allocator,
+    window: ?*c.GLFWwindow,
     sync: Sync,
-    swap_chain_data: SwapChain.Data,
+    swap_chain_data: *SwapChain.Data,
     command: Command,
     pipeline: Pipeline,
     queue: Queue,
     frame_counter: *u32,
+    manual_resize: *bool,
 ) ZVkError!void {
     const frame_idx: u32 = frame_counter.*;
-    try sync.drawfence(frame_idx); // syncs CPU and GPU
+    try sync.draw_fence_wait(frame_idx); // syncs CPU and GPU
 
     var img_idx: u32 = 0;
-    try req_vksuc(c.vkAcquireNextImageKHR(
+
+    if (wrap_vkres(c.vkAcquireNextImageKHR(
         sync.device,
         swap_chain_data.swap_chain,
         std.math.maxInt(u64),
         sync.present_complete_sems[frame_idx],
         null,
         &img_idx,
-    ));
+    ))) |ok| switch (ok) {
+        ZVkResult.Success, ZVkResult.SuboptimalKHR => {},
+        else => return ZVkError.Unhandled, // TODO Unhandled Error
+    } else |err| switch (err) {
+        ZVkError.ErrorOutOfDateKHR => {
+            std.log.debug("Swap chain out of date or surface lost - recreating", .{});
+            try swap_chain_data.reinit(alloc, window);
+            return; // we do not return in the other cases
+        },
+        else => return err,
+    }
+
+    try sync.draw_fence_reset(frame_idx);
 
     const img = swap_chain_data.imgs[img_idx];
     const img_view = swap_chain_data.img_views[img_idx];
@@ -198,7 +223,31 @@ pub fn draw_frame(
         .pSwapchains = &swap_chain_data.swap_chain,
         .pImageIndices = &img_idx,
     };
-    try req_vksuc(c.vkQueuePresentKHR(queue.present, &present_info));
+
+    var resize: bool = manual_resize.*;
+
+    if (wrap_vkres(
+        c.vkQueuePresentKHR(queue.present, &present_info),
+    )) |ok| switch (ok) {
+        ZVkResult.SuboptimalKHR => {
+            std.log.debug("Swap chain suboptimal - recreating", .{});
+            resize = true;
+        },
+        ZVkResult.Success => {},
+        else => return ZVkError.Unhandled, // TODO Unhandled Error
+    } else |err| switch (err) {
+        ZVkError.ErrorOutOfDateKHR => {
+            std.log.debug("Swap chain out of date or surface lost - recreating", .{});
+            resize = true;
+        },
+        else => return err,
+    }
+
+    if (resize) {
+        manual_resize.* = false;
+        try swap_chain_data.reinit(alloc, window);
+    }
 
     frame_counter.* = (frame_idx + 1) % max_flightframes;
+    return;
 }
